@@ -1,0 +1,68 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chat_help_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-botuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-botuser} -d ${POSTGRES_DB:-chat_help_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Not exposed to host by default — only reachable from within compose network.
+    # Uncomment next two lines if you need direct access (e.g. DBeaver):
+    # ports:
+    #   - "5432:5432"
+
+  # ── Migration runner (one-shot, exits after upgrade) ────────
+  migrate:
+    build:
+      context: .
+      target: runtime
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-chat_help_bot}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+
+  # ── Telegram bot ─────────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override DB host to point at the compose service
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-chat_help_bot}
+      TEMP_DIR: /tmp/chat_help_bot
+    ports:
+      # Expose webhook port. Nginx/Caddy on the host proxies to this.
+      - "${BOT_INTERNAL_PORT:-8080}:8080"
+    volumes:
+      - /tmp/chat_help_bot:/tmp/chat_help_bot
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres_data:
+    driver: local

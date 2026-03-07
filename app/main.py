@@ -7,6 +7,7 @@ import logging
 from aiohttp import web
 from aiogram import Bot
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from app.db.session import get_session_factory
 
 from app.bot.setup import create_bot, create_dispatcher
 from app.config import settings
@@ -17,6 +18,17 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def health_handler(request: web.Request) -> web.Response:
+    """Liveness probe used by Docker healthcheck."""
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(__import__("sqlalchemy").text("SELECT 1"))
+        return web.json_response({"status": "ok"})
+    except Exception as exc:
+        return web.json_response({"status": "error", "detail": str(exc)}, status=503)
 
 
 async def on_startup(app: web.Application) -> None:
@@ -54,6 +66,7 @@ def main() -> None:
         secret_token=settings.bot.webhook_secret or None,
     )
     webhook_handler.register(app, path=settings.bot.webhook_path)
+    app.router.add_get("/health", health_handler)
     setup_application(app, dp, bot=bot)
 
     app.on_startup.append(on_startup)
