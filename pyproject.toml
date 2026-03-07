@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chat-help-bot"
+version = "0.1.0"
+description = "Telegram dating helper bot MVP"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13,<4",
+    "aiohttp>=3.10,<4",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.29,<1",
+    "alembic>=1.13,<2",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.23,<1",
+    "aiosqlite>=0.20,<1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
