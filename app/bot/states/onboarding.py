@@ -5,7 +5,5 @@ from aiogram.fsm.state import State, StatesGroup
 
 class OnboardingStates(StatesGroup):
     gender = State()
-    situation = State()
-    role = State()
     style = State()
     identity = State()

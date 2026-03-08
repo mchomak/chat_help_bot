@@ -39,8 +39,6 @@ async def generate(
     modifier: str | None = None,
     parent_request_id: uuid.UUID | None = None,
     gender: str | None = None,
-    situation_type: str | None = None,
-    communication_role: str | None = None,
     communication_style: str | None = None,
     ai_identity_text: str | None = None,
     count: int = 4,
@@ -85,8 +83,6 @@ async def generate(
             modifier=modifier,
             count=count,
             gender=gender,
-            situation_type=situation_type,
-            communication_role=communication_role,
             communication_style=communication_style,
             ai_identity_text=ai_identity_text,
         )

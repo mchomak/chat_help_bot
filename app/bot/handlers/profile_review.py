@@ -10,14 +10,24 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import ensure_access, ensure_consent
-from app.bot.keyboards.scenarios import back_to_menu_keyboard, profile_result_keyboard
+from app.bot.keyboards.scenarios import error_with_retry_keyboard, profile_result_keyboard
 from app.bot.states.scenarios import ProfileReviewStates
 from app.db.repositories import user_repo
 from app.services import ai_service
-from app.services.image_service import download_telegram_photo, photo_to_base64
+from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="profile_review")
 logger = logging.getLogger(__name__)
+
+
+def _settings_kwargs(settings) -> dict:
+    if settings is None:
+        return {}
+    return {
+        "gender": settings.gender,
+        "communication_style": settings.communication_style,
+        "ai_identity_text": settings.ai_identity_text,
+    }
 
 
 @router.callback_query(F.data == "menu:profile_review")
@@ -58,8 +68,8 @@ async def on_profile_photo(
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
-        async with download_telegram_photo(message.bot, photo.file_id) as path:
-            b64 = await photo_to_base64(path)
+        async with download_telegram_photo(message.bot, photo.file_id) as data:
+            b64 = photo_bytes_to_base64(data)
 
         result = await ai_service.generate(
             db_session,
@@ -70,18 +80,19 @@ async def on_profile_photo(
             image_file_id=photo.file_id,
             image_mime_type="image/jpeg",
             image_size=photo.file_size,
-            gender=settings.gender if settings else None,
-            situation_type=settings.situation_type if settings else None,
-            communication_role=settings.communication_role if settings else None,
-            communication_style=settings.communication_style if settings else None,
-            ai_identity_text=settings.ai_identity_text if settings else None,
+            **_settings_kwargs(settings),
         )
         await _send_profile_result(processing_msg, result, state)
     except Exception:
         logger.exception("profile_review photo failed")
+        await state.update_data(
+            retry_scenario="profile_review",
+            retry_photo_file_id=photo.file_id,
+            retry_caption=caption_text,
+        )
         await processing_msg.edit_text(
-            "Произошла ошибка. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Произошла ошибка при обработке.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
 
@@ -106,18 +117,20 @@ async def on_profile_text(
             user_id=user_id,
             scenario="profile_review",
             input_text=message.text,
-            gender=settings.gender if settings else None,
-            situation_type=settings.situation_type if settings else None,
-            communication_role=settings.communication_role if settings else None,
-            communication_style=settings.communication_style if settings else None,
-            ai_identity_text=settings.ai_identity_text if settings else None,
+            **_settings_kwargs(settings),
         )
         await _send_profile_result(processing_msg, result, state)
     except Exception:
         logger.exception("profile_review text failed")
+        await state.update_data(
+            retry_scenario="profile_review",
+            retry_text=message.text,
+            retry_photo_file_id=None,
+            retry_caption=None,
+        )
         await processing_msg.edit_text(
-            "Произошла ошибка. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Произошла ошибка при обработке.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
 
@@ -161,11 +174,10 @@ async def _send_profile_result(
 ) -> None:
     request_id = result.get("request_id", "")
 
-    # Profile review returns structured dict, not "items"
     if not any(result.get(k) for k in ("strengths", "weaknesses", "improvements", "recommendations")):
         await msg.edit_text(
-            "Не удалось проанализировать профиль. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Не удалось проанализировать профиль.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
         return
