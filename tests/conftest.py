@@ -48,9 +48,9 @@ async def sample_user(session: AsyncSession) -> User:
     session.add(user)
     await session.flush()
 
-    settings = UserSettings(user_id=str(user.id))
-    consent = UserConsent(user_id=str(user.id))
-    access = UserAccess(user_id=str(user.id))
+    settings = UserSettings(user_id=user.id)
+    consent = UserConsent(user_id=user.id)
+    access = UserAccess(user_id=user.id)
     session.add_all([settings, consent, access])
     await session.flush()
     return user

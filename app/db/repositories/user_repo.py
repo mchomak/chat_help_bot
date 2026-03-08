@@ -30,9 +30,9 @@ async def get_or_create_user(
     await session.flush()
 
     # create related rows
-    settings = UserSettings(user_id=str(user.id))
-    consent = UserConsent(user_id=str(user.id))
-    access = UserAccess(user_id=str(user.id))
+    settings = UserSettings(user_id=user.id)
+    consent = UserConsent(user_id=user.id)
+    access = UserAccess(user_id=user.id)
     session.add_all([settings, consent, access])
     await session.flush()
     return user, True
@@ -54,7 +54,7 @@ async def update_user_fields(
 
 
 async def get_user_settings(session: AsyncSession, user_id: uuid.UUID) -> UserSettings | None:
-    stmt = select(UserSettings).where(UserSettings.user_id == str(user_id))
+    stmt = select(UserSettings).where(UserSettings.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -64,7 +64,7 @@ async def update_settings(
 ) -> UserSettings:
     us = await get_user_settings(session, user_id)
     if us is None:
-        us = UserSettings(user_id=str(user_id), **kwargs)
+        us = UserSettings(user_id=user_id, **kwargs)
         session.add(us)
     else:
         for k, v in kwargs.items():
@@ -74,7 +74,7 @@ async def update_settings(
 
 
 async def get_consent(session: AsyncSession, user_id: uuid.UUID) -> UserConsent | None:
-    stmt = select(UserConsent).where(UserConsent.user_id == str(user_id))
+    stmt = select(UserConsent).where(UserConsent.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -83,7 +83,7 @@ async def set_consent(session: AsyncSession, user_id: uuid.UUID) -> UserConsent:
     uc = await get_consent(session, user_id)
     if uc is None:
         uc = UserConsent(
-            user_id=str(user_id),
+            user_id=user_id,
             consent_given=True,
             consented_at=datetime.datetime.now(datetime.UTC),
         )
@@ -96,6 +96,6 @@ async def set_consent(session: AsyncSession, user_id: uuid.UUID) -> UserConsent:
 
 
 async def get_access(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | None:
-    stmt = select(UserAccess).where(UserAccess.user_id == str(user_id))
+    stmt = select(UserAccess).where(UserAccess.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()

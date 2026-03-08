@@ -42,5 +42,5 @@ async def test_save_ai_result(session: AsyncSession, sample_user) -> None:
         raw_response='{"messages": ["Hi!"]}',
         normalized_response={"items": ["Hi!"]},
     )
-    assert res.request_id == str(req.id)
+    assert res.request_id == req.id
     assert res.normalized_response == {"items": ["Hi!"]}

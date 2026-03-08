@@ -28,7 +28,7 @@ async def create_ai_request(
     parent_request_id: uuid.UUID | None = None,
 ) -> AIRequest:
     req = AIRequest(
-        user_id=str(user_id),
+        user_id=user_id,
         scenario_type=scenario_type,
         input_type=input_type,
         input_text=input_text,
@@ -39,7 +39,7 @@ async def create_ai_request(
         image_height=image_height,
         model_name=model_name,
         modifier=modifier,
-        parent_request_id=str(parent_request_id) if parent_request_id else None,
+        parent_request_id=parent_request_id,
     )
     session.add(req)
     await session.flush()
@@ -68,7 +68,7 @@ async def save_ai_result(
     error_text: str | None = None,
 ) -> AIResult:
     res = AIResult(
-        request_id=str(request_id),
+        request_id=request_id,
         raw_response=raw_response,
         normalized_response=normalized_response,
         error_text=error_text,

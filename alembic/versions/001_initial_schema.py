@@ -15,13 +15,16 @@ down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+UUID = postgresql.UUID(as_uuid=True)
+UUID_PK = dict(primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+
 
 def upgrade() -> None:
     op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
 
     op.create_table(
         "users",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
+        sa.Column("id", UUID, **UUID_PK),
         sa.Column("telegram_id", sa.BigInteger(), nullable=False, unique=True, index=True),
         sa.Column("username", sa.String(255), nullable=True),
         sa.Column("first_name", sa.String(255), nullable=True),
@@ -33,8 +36,8 @@ def upgrade() -> None:
 
     op.create_table(
         "user_settings",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("user_id", sa.String(), nullable=False, unique=True, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("user_id", UUID, nullable=False, unique=True, index=True),
         sa.Column("gender", sa.String(50), nullable=True),
         sa.Column("situation_type", sa.String(100), nullable=True),
         sa.Column("communication_role", sa.String(100), nullable=True),
@@ -47,8 +50,8 @@ def upgrade() -> None:
 
     op.create_table(
         "user_consents",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("user_id", sa.String(), nullable=False, unique=True, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("user_id", UUID, nullable=False, unique=True, index=True),
         sa.Column("consent_given", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("consented_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("version_code", sa.String(20), nullable=False, server_default=sa.text("'v1'")),
@@ -56,8 +59,8 @@ def upgrade() -> None:
 
     op.create_table(
         "user_access",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("user_id", sa.String(), nullable=False, unique=True, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("user_id", UUID, nullable=False, unique=True, index=True),
         sa.Column("trial_used", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("trial_started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("trial_expires_at", sa.DateTime(timezone=True), nullable=True),
@@ -70,8 +73,8 @@ def upgrade() -> None:
 
     op.create_table(
         "ai_requests",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("user_id", UUID, nullable=False, index=True),
         sa.Column("scenario_type", sa.String(50), nullable=False),
         sa.Column("input_type", sa.String(20), nullable=False),
         sa.Column("input_text", sa.Text(), nullable=True),
@@ -86,13 +89,13 @@ def upgrade() -> None:
         sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("parent_request_id", postgresql.UUID(as_uuid=True), nullable=True, index=True),
+        sa.Column("parent_request_id", UUID, nullable=True, index=True),
     )
 
     op.create_table(
         "ai_results",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("request_id", sa.String(), nullable=False, unique=True, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("request_id", UUID, nullable=False, unique=True, index=True),
         sa.Column("raw_response", sa.Text(), nullable=True),
         sa.Column("normalized_response", postgresql.JSONB(), nullable=True),
         sa.Column("error_text", sa.Text(), nullable=True),
@@ -101,8 +104,8 @@ def upgrade() -> None:
 
     op.create_table(
         "transactions",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
-        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("id", UUID, **UUID_PK),
+        sa.Column("user_id", UUID, nullable=False, index=True),
         sa.Column("provider", sa.String(50), nullable=False, server_default=sa.text("'stub'")),
         sa.Column("external_payment_id", sa.String(255), nullable=True),
         sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
@@ -118,7 +121,7 @@ def upgrade() -> None:
 
     op.create_table(
         "error_logs",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
+        sa.Column("id", UUID, **UUID_PK),
         sa.Column("source", sa.String(100), nullable=False),
         sa.Column("message", sa.Text(), nullable=False),
         sa.Column("stacktrace", sa.Text(), nullable=True),

@@ -42,7 +42,7 @@ async def test_expired_trial(session: AsyncSession, sample_user) -> None:
     await activate_trial(session, sample_user.id)
 
     # Manually expire the trial
-    stmt = select(UserAccess).where(UserAccess.user_id == str(sample_user.id))
+    stmt = select(UserAccess).where(UserAccess.user_id == sample_user.id)
     result = await session.execute(stmt)
     access = result.scalar_one()
     access.trial_expires_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1)

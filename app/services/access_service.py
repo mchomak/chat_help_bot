@@ -24,7 +24,7 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 
     Performs expiration check and updates status if needed.
     """
-    stmt = select(UserAccess).where(UserAccess.user_id == str(user_id))
+    stmt = select(UserAccess).where(UserAccess.user_id == user_id)
     result = await session.execute(stmt)
     access = result.scalar_one_or_none()
     if access is None:
@@ -68,7 +68,7 @@ async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAcces
 
     # SELECT FOR UPDATE pattern: fetch, check, then update
     stmt = select(UserAccess).where(
-        UserAccess.user_id == str(user_id),
+        UserAccess.user_id == user_id,
         UserAccess.trial_used.is_(False),
     )
     result = await session.execute(stmt)
@@ -93,7 +93,7 @@ async def grant_paid_access(
     """Grant paid access to user after successful transaction."""
     stmt = (
         update(UserAccess)
-        .where(UserAccess.user_id == str(user_id))
+        .where(UserAccess.user_id == user_id)
         .values(
             access_status=AccessStatus.PAID,
             paid_until=paid_until,
