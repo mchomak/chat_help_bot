@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 
-from sqlalchemy import DateTime, Numeric, String, Text, func
-from sqlalchemy import JSON
+from sqlalchemy import JSON, DateTime, Numeric, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, UUIDPrimaryKeyMixin
@@ -14,7 +14,7 @@ from app.db.models.base import Base, UUIDPrimaryKeyMixin
 class Transaction(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "transactions"
 
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(50), default="stub", nullable=False)
     external_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(

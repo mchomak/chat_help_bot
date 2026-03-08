@@ -20,7 +20,7 @@ async def create_transaction(
     comment: str | None = None,
 ) -> Transaction:
     tx = Transaction(
-        user_id=str(user_id),
+        user_id=user_id,
         amount=amount,
         currency=currency,
         provider=provider,
@@ -42,7 +42,7 @@ async def get_pending_transactions(
 ) -> list[Transaction]:
     stmt = (
         select(Transaction)
-        .where(Transaction.user_id == str(user_id), Transaction.status == "pending")
+        .where(Transaction.user_id == user_id, Transaction.status == "pending")
         .order_by(Transaction.created_at.desc())
     )
     result = await session.execute(stmt)

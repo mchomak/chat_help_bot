@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, DateTime, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -23,8 +24,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "user_settings"
 
-    user_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True,
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, unique=True, index=True,
     )
     gender: Mapped[str | None] = mapped_column(String(50), nullable=True)
     situation_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -37,8 +38,8 @@ class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class UserConsent(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "user_consents"
 
-    user_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True,
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, unique=True, index=True,
     )
     consent_given: Mapped[bool] = mapped_column(default=False, nullable=False)
     consented_at: Mapped[datetime.datetime | None] = mapped_column(
@@ -50,8 +51,8 @@ class UserConsent(UUIDPrimaryKeyMixin, Base):
 class UserAccess(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "user_access"
 
-    user_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True,
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, unique=True, index=True,
     )
     trial_used: Mapped[bool] = mapped_column(default=False, nullable=False)
     trial_started_at: Mapped[datetime.datetime | None] = mapped_column(

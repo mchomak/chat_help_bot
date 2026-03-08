@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, UUIDPrimaryKeyMixin
@@ -13,7 +14,7 @@ from app.db.models.base import Base, UUIDPrimaryKeyMixin
 class AIRequest(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "ai_requests"
 
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     scenario_type: Mapped[str] = mapped_column(String(50), nullable=False)
     input_type: Mapped[str] = mapped_column(String(20), nullable=False)  # text / image / text_image
     input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -32,16 +33,16 @@ class AIRequest(UUIDPrimaryKeyMixin, Base):
     finished_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
-    parent_request_id: Mapped[str | None] = mapped_column(
-        String, nullable=True, index=True,
+    parent_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True, index=True,
     )
 
 
 class AIResult(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "ai_results"
 
-    request_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True,
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, unique=True, index=True,
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     normalized_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
