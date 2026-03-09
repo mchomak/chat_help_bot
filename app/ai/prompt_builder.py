@@ -41,8 +41,6 @@ SCENARIO_TEMPLATES = {
 
 def _build_user_context(
     gender: str | None = None,
-    situation_type: str | None = None,
-    communication_role: str | None = None,
     communication_style: str | None = None,
     ai_identity_text: str | None = None,
 ) -> str:
@@ -50,10 +48,6 @@ def _build_user_context(
     parts: list[str] = []
     if gender:
         parts.append(f"User gender: {gender}")
-    if situation_type:
-        parts.append(f"Situation: {situation_type}")
-    if communication_role:
-        parts.append(f"User role: {communication_role}")
     if communication_style:
         parts.append(f"Communication style: {communication_style}")
     if ai_identity_text:
@@ -72,8 +66,6 @@ def build_messages(
     modifier: str | None = None,
     count: int = 4,
     gender: str | None = None,
-    situation_type: str | None = None,
-    communication_role: str | None = None,
     communication_style: str | None = None,
     ai_identity_text: str | None = None,
 ) -> list[dict]:
@@ -81,8 +73,6 @@ def build_messages(
     templates = SCENARIO_TEMPLATES[scenario]
     user_context = _build_user_context(
         gender=gender,
-        situation_type=situation_type,
-        communication_role=communication_role,
         communication_style=communication_style,
         ai_identity_text=ai_identity_text,
     )

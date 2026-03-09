@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
-import os
-import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,31 +12,23 @@ from typing import AsyncIterator
 
 from aiogram import Bot
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def download_telegram_photo(
-    bot: Bot,
-    file_id: str,
-) -> AsyncIterator[Path]:
-    """Download photo to a temp file; guaranteed cleanup on exit."""
-    settings.temp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = settings.temp_dir / f"{uuid.uuid4().hex}.jpg"
+async def download_telegram_photo(bot: Bot, file_id: str) -> AsyncIterator[bytes]:
+    """Download photo to memory; yield raw bytes. No temp files needed."""
+    buf = io.BytesIO()
+    file = await bot.get_file(file_id)
+    await bot.download_file(file.file_path, destination=buf)
+    logger.debug("Downloaded file %s (%d bytes)", file_id, buf.tell())
+    buf.seek(0)
     try:
-        file = await bot.get_file(file_id)
-        await bot.download_file(file.file_path, destination=str(tmp_path))
-        logger.debug("Downloaded file %s -> %s", file_id, tmp_path)
-        yield tmp_path
+        yield buf.read()
     finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-            logger.debug("Removed temp file %s", tmp_path)
+        buf.close()
 
 
-async def photo_to_base64(path: Path) -> str:
-    """Read image file and return base64-encoded string."""
-    data = path.read_bytes()
+def photo_bytes_to_base64(data: bytes) -> str:
+    """Encode raw bytes to base64 string."""
     return base64.b64encode(data).decode("utf-8")

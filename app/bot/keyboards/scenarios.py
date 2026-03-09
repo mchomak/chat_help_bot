@@ -56,3 +56,13 @@ def back_to_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="В меню", callback_data="back:menu")],
         ],
     )
+
+
+def error_with_retry_keyboard() -> InlineKeyboardMarkup:
+    """Error keyboard with retry and menu buttons."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Попробовать ещё раз", callback_data="retry:last")],
+            [InlineKeyboardButton(text="В меню", callback_data="back:menu")],
+        ],
+    )

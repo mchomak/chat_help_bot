@@ -10,14 +10,24 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import ensure_access, ensure_consent
-from app.bot.keyboards.scenarios import back_to_menu_keyboard, first_msg_result_keyboard
+from app.bot.keyboards.scenarios import error_with_retry_keyboard, first_msg_result_keyboard
 from app.bot.states.scenarios import FirstMessageStates
 from app.db.repositories import user_repo
 from app.services import ai_service
-from app.services.image_service import download_telegram_photo, photo_to_base64
+from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="first_message")
 logger = logging.getLogger(__name__)
+
+
+def _settings_kwargs(settings) -> dict:
+    if settings is None:
+        return {}
+    return {
+        "gender": settings.gender,
+        "communication_style": settings.communication_style,
+        "ai_identity_text": settings.ai_identity_text,
+    }
 
 
 @router.callback_query(F.data == "menu:first_message")
@@ -58,8 +68,8 @@ async def on_first_msg_photo(
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
-        async with download_telegram_photo(message.bot, photo.file_id) as path:
-            b64 = await photo_to_base64(path)
+        async with download_telegram_photo(message.bot, photo.file_id) as data:
+            b64 = photo_bytes_to_base64(data)
 
         result = await ai_service.generate(
             db_session,
@@ -70,18 +80,19 @@ async def on_first_msg_photo(
             image_file_id=photo.file_id,
             image_mime_type="image/jpeg",
             image_size=photo.file_size,
-            gender=settings.gender if settings else None,
-            situation_type=settings.situation_type if settings else None,
-            communication_role=settings.communication_role if settings else None,
-            communication_style=settings.communication_style if settings else None,
-            ai_identity_text=settings.ai_identity_text if settings else None,
+            **_settings_kwargs(settings),
         )
         await _send_first_msg_result(processing_msg, result, state)
     except Exception:
         logger.exception("first_message photo failed")
+        await state.update_data(
+            retry_scenario="first_message",
+            retry_photo_file_id=photo.file_id,
+            retry_caption=caption_text,
+        )
         await processing_msg.edit_text(
-            "Произошла ошибка. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Произошла ошибка при обработке.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
 
@@ -106,18 +117,20 @@ async def on_first_msg_text(
             user_id=user_id,
             scenario="first_message",
             input_text=message.text,
-            gender=settings.gender if settings else None,
-            situation_type=settings.situation_type if settings else None,
-            communication_role=settings.communication_role if settings else None,
-            communication_style=settings.communication_style if settings else None,
-            ai_identity_text=settings.ai_identity_text if settings else None,
+            **_settings_kwargs(settings),
         )
         await _send_first_msg_result(processing_msg, result, state)
     except Exception:
         logger.exception("first_message text failed")
+        await state.update_data(
+            retry_scenario="first_message",
+            retry_text=message.text,
+            retry_photo_file_id=None,
+            retry_caption=None,
+        )
         await processing_msg.edit_text(
-            "Произошла ошибка. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Произошла ошибка при обработке.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
 
@@ -129,8 +142,8 @@ async def _send_first_msg_result(
     request_id = result.get("request_id", "")
     if not items:
         await msg.edit_text(
-            "Не удалось сгенерировать варианты. Попробуйте еще раз.",
-            reply_markup=back_to_menu_keyboard(),
+            "Не удалось сгенерировать варианты.",
+            reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
         return
