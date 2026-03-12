@@ -19,11 +19,15 @@ def main_menu_inline() -> InlineKeyboardMarkup:
     """Inline keyboard for the main menu."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Ответить на сообщение", callback_data="menu:reply_message")],
-            [InlineKeyboardButton(text="✉️ Первое сообщение", callback_data="menu:first_message")],
-            [InlineKeyboardButton(text="👤 Разбор профиля", callback_data="menu:profile_review")],
-            [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings")],
-            [InlineKeyboardButton(text="💳 Оплата / Тариф", callback_data="menu:payment")],
-            [InlineKeyboardButton(text="❓ Помощь", callback_data="menu:help")],
+            [InlineKeyboardButton(text="✉️ Генератор первых сообщений", callback_data="menu:first_message")],
+            [InlineKeyboardButton(text="💬 Флирт", callback_data="menu:flirt")],
+            [InlineKeyboardButton(text="🔍 Анализатор диалога", callback_data="menu:analyzer")],
+            [InlineKeyboardButton(text="🔄 Анти-игнор", callback_data="menu:anti_ignor")],
+            [InlineKeyboardButton(text="📸 Подкаты по фото", callback_data="menu:photo_pickup")],
+            [InlineKeyboardButton(text="💳 Подписка", callback_data="menu:subscription")],
+            [
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings"),
+                InlineKeyboardButton(text="❓ Помощь", callback_data="menu:help"),
+            ],
         ],
     )

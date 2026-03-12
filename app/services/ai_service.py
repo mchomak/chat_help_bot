@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.client import chat_completion
 from app.ai.prompt_builder import build_messages
 from app.ai.response_parser import (
+    parse_analyzer_response,
     parse_first_message_response,
+    parse_messages_response,
     parse_profile_review_response,
     parse_reply_response,
 )
@@ -23,6 +25,9 @@ SCENARIO_PARSERS = {
     "reply_message": parse_reply_response,
     "first_message": parse_first_message_response,
     "profile_review": parse_profile_review_response,
+    "analyzer": parse_analyzer_response,
+    "anti_ignor": parse_messages_response,
+    "photo_pickup": parse_messages_response,
 }
 
 
@@ -36,18 +41,20 @@ async def generate(
     image_file_id: str | None = None,
     image_mime_type: str | None = None,
     image_size: int | None = None,
+    style: str | None = None,
     modifier: str | None = None,
+    extra_context: str | None = None,
     parent_request_id: uuid.UUID | None = None,
     gender: str | None = None,
+    situation_type: str | None = None,
+    communication_role: str | None = None,
     communication_style: str | None = None,
     ai_identity_text: str | None = None,
     count: int = 4,
 ) -> dict:
     """Run full AI generation pipeline. Returns parsed result dict.
 
-    Result shape depends on scenario:
-    - reply_message / first_message: {"items": [...]}
-    - profile_review: {"strengths": [...], "weaknesses": [...], ...}
+    Result shape: {"items": [...], "analysis": [...] (optional), "request_id": "..."}
     """
     has_image = image_base64 is not None
     input_type = "text"
@@ -69,7 +76,7 @@ async def generate(
         image_file_id=image_file_id,
         image_mime_type=image_mime_type,
         image_size=image_size,
-        modifier=modifier,
+        modifier=style or modifier,
         parent_request_id=parent_request_id,
     )
     await session.commit()
@@ -80,11 +87,15 @@ async def generate(
             input_text=input_text,
             has_image=has_image,
             image_base64=image_base64,
+            style=style,
             modifier=modifier,
+            extra_context=extra_context,
             count=count,
             gender=gender,
-            communication_style=communication_style,
+            situation_type=situation_type,
+            communication_role=communication_role,
             ai_identity_text=ai_identity_text,
+            communication_style=communication_style,
         )
 
         raw_response = await chat_completion(messages, model=model_name, has_image=has_image)

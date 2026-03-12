@@ -8,16 +8,18 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot.handlers import (
+    analyzer,
+    anti_ignor,
     cancel,
     consent,
     first_message,
+    flirt,
     help as help_handler,
     menu,
     modifier,
     onboarding,
     payment,
-    profile_review,
-    reply_message,
+    photo_pickup,
     settings_handler,
     start,
 )
@@ -47,7 +49,7 @@ def create_dispatcher() -> Dispatcher:
     dp.message.middleware(EnsureUserMiddleware())
     dp.callback_query.middleware(EnsureUserMiddleware())
 
-    # Register routers
+    # Register routers (order matters for handler priority)
     dp.include_router(cancel.router)
     dp.include_router(start.router)
     dp.include_router(onboarding.router)
@@ -56,9 +58,11 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(help_handler.router)
     dp.include_router(settings_handler.router)
     dp.include_router(payment.router)
-    dp.include_router(reply_message.router)
+    dp.include_router(flirt.router)
     dp.include_router(first_message.router)
-    dp.include_router(profile_review.router)
-    dp.include_router(modifier.router)
+    dp.include_router(analyzer.router)
+    dp.include_router(anti_ignor.router)
+    dp.include_router(photo_pickup.router)
+    dp.include_router(modifier.router)  # Must be last — handles generic postgen callbacks
 
     return dp

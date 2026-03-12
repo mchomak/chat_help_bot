@@ -32,6 +32,7 @@ class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     communication_role: Mapped[str | None] = mapped_column(String(100), nullable=True)
     communication_style: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ai_identity_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    default_style: Mapped[str | None] = mapped_column(String(50), nullable=True)
     onboarding_completed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 

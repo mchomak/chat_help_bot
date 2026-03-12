@@ -1,4 +1,4 @@
-"""Handler for modifier buttons (regenerate with different tone/style) and retry."""
+"""Post-generation handlers: change style, more variants, retry, back navigation."""
 
 from __future__ import annotations
 
@@ -9,122 +9,155 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access
-from app.bot.handlers.profile_review import _format_profile_review
+from app.bot.handlers.common import ensure_access, generate_and_send, send_menu
 from app.bot.keyboards.scenarios import (
     back_to_menu_keyboard,
     error_with_retry_keyboard,
-    first_msg_result_keyboard,
-    profile_result_keyboard,
-    reply_result_keyboard,
+    post_generation_style_keyboard,
 )
-from app.db.repositories import ai_repo, user_repo
-from app.services import ai_service
+from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="modifier")
 logger = logging.getLogger(__name__)
 
-RESULT_KEYBOARD_MAP = {
-    "reply_message": reply_result_keyboard,
-    "first_message": first_msg_result_keyboard,
-    "profile_review": profile_result_keyboard,
+RESULT_HEADERS = {
+    "first_message": "Варианты первого сообщения:",
+    "analyzer": "Варианты ответа:",
+    "anti_ignor": "Варианты для возобновления диалога:",
+    "photo_pickup": "Варианты подкатов:",
 }
 
 
-def _settings_kwargs(settings) -> dict:
-    if settings is None:
-        return {}
-    return {
-        "gender": settings.gender,
-        "communication_style": settings.communication_style,
-        "ai_identity_text": settings.ai_identity_text,
-    }
+# --- "Изменить стиль" button ---
+@router.callback_query(F.data.startswith("postgen:chstyle:"))
+async def on_change_style(callback: types.CallbackQuery, state: FSMContext) -> None:
+    scenario = callback.data.split(":")[-1]
+    await callback.answer()
+    await callback.message.edit_text(
+        "Выберите новый стиль:",
+        reply_markup=post_generation_style_keyboard(scenario),
+    )
 
 
-@router.callback_query(F.data.startswith("mod:"))
-async def on_modifier(
+# --- Style chosen for re-generation ---
+@router.callback_query(F.data.startswith("restyle:"))
+async def on_restyle(
     callback: types.CallbackQuery,
     state: FSMContext,
     db_session: AsyncSession,
 ) -> None:
-    """Handle modifier button presses: mod:<scenario>:<modifier>:<parent_request_id>."""
     parts = callback.data.split(":")
-    if len(parts) != 4:
-        await callback.answer("Неверный формат запроса.")
+    if len(parts) != 3:
+        await callback.answer("Неверный формат.")
         return
 
-    _, scenario, modifier, parent_id_str = parts
-
+    _, scenario, new_style = parts
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
     if not await ensure_access(callback, db_session, user_id):
         return
 
+    # Retrieve saved context
+    input_text = data.get("gen_input_text")
+    image_file_id = data.get("gen_image_file_id")
+    extra_context = data.get("gen_extra_context")
+
+    if not input_text and not image_file_id:
+        await callback.answer("Данные предыдущего запроса не найдены.")
+        await callback.message.edit_text(
+            "Контекст предыдущей генерации не найден. Начните заново через меню.",
+            reply_markup=back_to_menu_keyboard(),
+        )
+        return
+
     await callback.answer("Генерирую...")
 
-    try:
-        parent_id = uuid.UUID(parent_id_str)
-    except ValueError:
+    # Re-download image if needed
+    image_b64 = None
+    if image_file_id:
+        try:
+            async with download_telegram_photo(callback.bot, image_file_id) as photo_data:
+                image_b64 = photo_bytes_to_base64(photo_data)
+        except Exception:
+            logger.warning("Failed to re-download image %s", image_file_id)
+
+    await generate_and_send(
+        callback, state, db_session,
+        user_id=user_id,
+        scenario=scenario,
+        style=new_style,
+        input_text=input_text,
+        image_base64=image_b64,
+        image_file_id=image_file_id,
+        image_mime_type="image/jpeg" if image_file_id else None,
+        extra_context=extra_context,
+        processing_text="Генерирую в новом стиле...",
+        result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
+    )
+
+
+# --- "Еще варианты" button ---
+@router.callback_query(F.data.startswith("postgen:more:"))
+async def on_more_variants(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    db_session: AsyncSession,
+) -> None:
+    scenario = callback.data.split(":")[-1]
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+
+    if not await ensure_access(callback, db_session, user_id):
+        return
+
+    input_text = data.get("gen_input_text")
+    image_file_id = data.get("gen_image_file_id")
+    style = data.get("gen_style")
+    extra_context = data.get("gen_extra_context")
+
+    if not input_text and not image_file_id:
+        await callback.answer("Данные предыдущего запроса не найдены.")
         await callback.message.edit_text(
-            "Ошибка: не найден исходный запрос.",
+            "Контекст предыдущей генерации не найден. Начните заново через меню.",
             reply_markup=back_to_menu_keyboard(),
         )
         return
 
-    # Fetch original request to reuse input
-    original = await ai_repo.get_ai_request(db_session, parent_id)
-    if original is None:
-        await callback.message.edit_text(
-            "Исходный запрос не найден. Пожалуйста, начните заново.",
-            reply_markup=back_to_menu_keyboard(),
-        )
-        return
+    await callback.answer("Генерирую...")
 
-    await callback.message.edit_text("Генерирую новые варианты...")
+    image_b64 = None
+    if image_file_id:
+        try:
+            async with download_telegram_photo(callback.bot, image_file_id) as photo_data:
+                image_b64 = photo_bytes_to_base64(photo_data)
+        except Exception:
+            logger.warning("Failed to re-download image %s", image_file_id)
 
-    try:
-        settings = await user_repo.get_user_settings(db_session, user_id)
-        result = await ai_service.generate(
-            db_session,
-            user_id=user_id,
-            scenario=scenario,
-            input_text=original.input_text,
-            modifier=modifier,
-            parent_request_id=parent_id,
-            **_settings_kwargs(settings),
-        )
+    await generate_and_send(
+        callback, state, db_session,
+        user_id=user_id,
+        scenario=scenario,
+        style=style,
+        input_text=input_text,
+        image_base64=image_b64,
+        image_file_id=image_file_id,
+        image_mime_type="image/jpeg" if image_file_id else None,
+        extra_context=extra_context,
+        processing_text="Генерирую новые варианты...",
+        result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
+    )
 
-        request_id = result.get("request_id", parent_id_str)
-        kb_factory = RESULT_KEYBOARD_MAP.get(scenario)
 
-        if scenario == "profile_review":
-            text = _format_profile_review(result)
-        else:
-            items = result.get("items", [])
-            if not items:
-                await callback.message.edit_text(
-                    "Не удалось сгенерировать варианты.",
-                    reply_markup=error_with_retry_keyboard(),
-                )
-                return
-            header = "Варианты ответа:" if scenario == "reply_message" else "Варианты первого сообщения:"
-            text_parts = [f"{header}\n"]
-            for i, item in enumerate(items, 1):
-                text_parts.append(f"{i}. {item}\n")
-            text = "\n".join(text_parts)
-
-        await callback.message.edit_text(
-            text,
-            reply_markup=kb_factory(request_id) if kb_factory else back_to_menu_keyboard(),
-        )
-    except Exception:
-        logger.exception("modifier generation failed")
-        await callback.message.edit_text(
-            "Произошла ошибка при обработке.",
-            reply_markup=error_with_retry_keyboard(),
-        )
+# --- "Назад" buttons for scenarios ---
+@router.callback_query(F.data.startswith("back:"))
+async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
+    target = callback.data.split(":", 1)[-1]
+    await callback.answer()
+    await state.set_state(None)
+    # All "back" targets go to main menu for simplicity
+    await send_menu(callback)
 
 
 # --- Retry last action ---
@@ -134,13 +167,12 @@ async def on_retry(
     state: FSMContext,
     db_session: AsyncSession,
 ) -> None:
-    """Retry the last failed AI request using saved context from FSM state."""
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    scenario = data.get("retry_scenario")
+    scenario = data.get("retry_scenario") or data.get("gen_scenario")
     if not scenario:
-        await callback.answer("Нет данных для повтора. Попробуйте заново через меню.")
+        await callback.answer("Нет данных для повтора.")
         await callback.message.edit_text(
             "Данные предыдущего запроса не найдены.",
             reply_markup=back_to_menu_keyboard(),
@@ -150,68 +182,31 @@ async def on_retry(
     if not await ensure_access(callback, db_session, user_id):
         return
 
+    input_text = data.get("retry_text") or data.get("gen_input_text")
+    image_file_id = data.get("retry_photo_file_id") or data.get("gen_image_file_id")
+    style = data.get("retry_style") or data.get("gen_style")
+    extra_context = data.get("retry_extra_context") or data.get("gen_extra_context")
+
     await callback.answer("Повторяю запрос...")
-    await callback.message.edit_text("Повторяю запрос...")
 
-    photo_file_id = data.get("retry_photo_file_id")
-    input_text = data.get("retry_text") or data.get("retry_caption")
+    image_b64 = None
+    if image_file_id:
+        try:
+            async with download_telegram_photo(callback.bot, image_file_id) as photo_data:
+                image_b64 = photo_bytes_to_base64(photo_data)
+        except Exception:
+            logger.warning("Failed to re-download image %s", image_file_id)
 
-    try:
-        settings = await user_repo.get_user_settings(db_session, user_id)
-        kwargs = _settings_kwargs(settings)
-
-        image_b64 = None
-        if photo_file_id:
-            async with download_telegram_photo(callback.bot, photo_file_id) as data:
-                image_b64 = photo_bytes_to_base64(data)
-
-        result = await ai_service.generate(
-            db_session,
-            user_id=user_id,
-            scenario=scenario,
-            input_text=input_text,
-            image_base64=image_b64,
-            image_file_id=photo_file_id,
-            image_mime_type="image/jpeg" if photo_file_id else None,
-            **kwargs,
-        )
-
-        request_id = result.get("request_id", "")
-        kb_factory = RESULT_KEYBOARD_MAP.get(scenario)
-
-        if scenario == "profile_review":
-            text = _format_profile_review(result)
-            if not any(result.get(k) for k in ("strengths", "weaknesses", "improvements", "recommendations")):
-                text = "Не удалось проанализировать профиль."
-                await callback.message.edit_text(text, reply_markup=error_with_retry_keyboard())
-                return
-        else:
-            items = result.get("items", [])
-            if not items:
-                await callback.message.edit_text(
-                    "Не удалось сгенерировать варианты.",
-                    reply_markup=error_with_retry_keyboard(),
-                )
-                return
-            header = "Варианты ответа:" if scenario == "reply_message" else "Варианты первого сообщения:"
-            text_parts = [f"{header}\n"]
-            for i, item in enumerate(items, 1):
-                text_parts.append(f"{i}. {item}\n")
-            text = "\n".join(text_parts)
-
-        # Clear retry context on success
-        await state.update_data(
-            retry_scenario=None, retry_photo_file_id=None,
-            retry_text=None, retry_caption=None,
-            last_request_id=request_id,
-        )
-        await callback.message.edit_text(
-            text,
-            reply_markup=kb_factory(request_id) if kb_factory else back_to_menu_keyboard(),
-        )
-    except Exception:
-        logger.exception("retry failed for scenario=%s", scenario)
-        await callback.message.edit_text(
-            "Повторная попытка тоже не удалась.",
-            reply_markup=error_with_retry_keyboard(),
-        )
+    await generate_and_send(
+        callback, state, db_session,
+        user_id=user_id,
+        scenario=scenario,
+        style=style,
+        input_text=input_text,
+        image_base64=image_b64,
+        image_file_id=image_file_id,
+        image_mime_type="image/jpeg" if image_file_id else None,
+        extra_context=extra_context,
+        processing_text="Повторяю запрос...",
+        result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
+    )
