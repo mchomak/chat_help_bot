@@ -1,7 +1,8 @@
-"""Payment / tariff handlers (stub implementation)."""
+"""Payment / subscription handlers (stub implementation)."""
 
 from __future__ import annotations
 
+import datetime
 import uuid
 
 from aiogram import F, Router, types
@@ -10,8 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.payment import payment_confirm_keyboard, payment_menu_keyboard
 from app.bot.keyboards.scenarios import back_to_menu_keyboard
-from app.db.repositories import transaction_repo
-from app.services.access_service import check_access
+from app.services.access_service import AccessStatus, check_access
 from app.services.payment_service import confirm_stub_payment, create_stub_payment
 
 router = Router(name="payment")
@@ -24,18 +24,31 @@ ACCESS_LABELS = {
 }
 
 
-@router.callback_query(F.data == "menu:payment")
+@router.callback_query(F.data.in_({"menu:payment", "menu:subscription"}))
 async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
     status = await check_access(db_session, user_id)
     label = ACCESS_LABELS.get(status, status)
 
-    text = (
-        f"Статус: {label}\n\n"
-        "Для продолжения использования оформите подписку.\n"
-        "Стоимость: 299 ₽ / месяц"
-    )
+    # Build status text
+    lines = [f"Статус: {label}"]
+
+    if status == AccessStatus.TRIAL:
+        from app.db.repositories import user_repo
+        access = await user_repo.get_access(db_session, user_id)
+        if access and access.trial_expires_at:
+            now = datetime.datetime.now(datetime.UTC)
+            remaining = access.trial_expires_at - now
+            if remaining.total_seconds() > 0:
+                minutes = int(remaining.total_seconds() // 60)
+                lines.append(f"Осталось: {minutes} мин.")
+
+    if status in (AccessStatus.EXPIRED, AccessStatus.NONE):
+        lines.append("\nДля продолжения использования оформите подписку.")
+        lines.append("Стоимость: 299 ₽ / месяц")
+
+    text = "\n".join(lines)
     await callback.answer()
     await callback.message.edit_text(text, reply_markup=payment_menu_keyboard())
 

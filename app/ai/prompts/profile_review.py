@@ -1,4 +1,4 @@
-"""Prompts for the "Profile review" scenario."""
+"""Prompts for the 'Profile review' scenario."""
 
 PROFILE_REVIEW_SYSTEM = """
 You are a dating profile advisor. The user will share their own profile
@@ -20,6 +20,8 @@ Rules:
 - Natural Russian language
 - Be honest but kind
 
+{style_instruction}
+
 {user_context}
 
 {safety}
@@ -39,6 +41,7 @@ PROFILE_REVIEW_USER_IMAGE = """
 The user sent a screenshot of their profile. Analyse it and provide a review.
 """.strip()
 
+# Legacy modifiers
 PROFILE_REVIEW_MODIFIER_SHORT = "Keep each point very brief — one sentence max."
 PROFILE_REVIEW_MODIFIER_DETAILED = "Provide more detailed explanations for each point."
 PROFILE_REVIEW_MODIFIER_MORE_RECS = "Focus on providing more practical recommendations (4-6)."

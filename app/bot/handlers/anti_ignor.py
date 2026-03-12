@@ -1,6 +1,6 @@
-"""Handler for the 'First message generator' scenario.
+"""Handler for the 'Anti-ignor' scenario.
 
-Flow: style selection → input method → input data → AI generation → result.
+Flow: style → time without answer → last message → AI generation.
 """
 
 from __future__ import annotations
@@ -13,18 +13,25 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.scenarios import input_method_keyboard
+from app.bot.keyboards.scenarios import anti_ignor_time_keyboard
 from app.bot.keyboards.styles import get_style_label, style_keyboard
-from app.bot.states.scenarios import FirstMessageStates
+from app.bot.states.scenarios import AntiIgnorStates
 from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
-router = Router(name="first_message")
+router = Router(name="anti_ignor")
 logger = logging.getLogger(__name__)
 
+TIME_LABELS = {
+    "1day": "1 день",
+    "2-3days": "2-3 дня",
+    "week": "неделя",
+    "other": "другое",
+}
 
-@router.callback_query(F.data == "menu:first_message")
-async def start_first_msg_scenario(
+
+@router.callback_query(F.data == "menu:anti_ignor")
+async def start_anti_ignor(
     callback: types.CallbackQuery,
     state: FSMContext,
     db_session: AsyncSession,
@@ -37,25 +44,25 @@ async def start_first_msg_scenario(
 
     await callback.answer()
 
-    # Check if user has a default style
+    # Check default style
     settings = await user_repo.get_user_settings(db_session, user_id)
     if settings and settings.default_style:
         await state.update_data(chosen_style=settings.default_style)
         await callback.message.edit_text(
             f"Стиль: {get_style_label(settings.default_style)}\n\n"
-            "Выберите способ ввода:",
-            reply_markup=input_method_keyboard("first_message"),
+            "Сколько времени нет ответа?",
+            reply_markup=anti_ignor_time_keyboard(),
         )
-        await state.set_state(FirstMessageStates.choosing_input_method)
+        await state.set_state(AntiIgnorStates.choosing_time)
     else:
         await callback.message.edit_text(
             "Выберите стиль ответа:",
-            reply_markup=style_keyboard("fmstyle"),
+            reply_markup=style_keyboard("aistyle"),
         )
-        await state.set_state(FirstMessageStates.choosing_style)
+        await state.set_state(AntiIgnorStates.choosing_style)
 
 
-@router.callback_query(FirstMessageStates.choosing_style, F.data.startswith("fmstyle:"))
+@router.callback_query(AntiIgnorStates.choosing_style, F.data.startswith("aistyle:"))
 async def on_style_chosen(
     callback: types.CallbackQuery, state: FSMContext,
 ) -> None:
@@ -63,33 +70,29 @@ async def on_style_chosen(
     await state.update_data(chosen_style=style)
     await callback.answer()
     await callback.message.edit_text(
-        f"Стиль: {get_style_label(style)}\n\nВыберите способ ввода:",
-        reply_markup=input_method_keyboard("first_message"),
+        "Сколько времени нет ответа?",
+        reply_markup=anti_ignor_time_keyboard(),
     )
-    await state.set_state(FirstMessageStates.choosing_input_method)
+    await state.set_state(AntiIgnorStates.choosing_time)
 
 
-@router.callback_query(FirstMessageStates.choosing_input_method, F.data.startswith("input:first_message:"))
-async def on_input_method_chosen(
+@router.callback_query(AntiIgnorStates.choosing_time, F.data.startswith("aitime:"))
+async def on_time_chosen(
     callback: types.CallbackQuery, state: FSMContext,
 ) -> None:
-    method = callback.data.split(":")[-1]
-    await state.update_data(input_method=method)
+    time_key = callback.data.split(":")[-1]
+    time_label = TIME_LABELS.get(time_key, time_key)
+    await state.update_data(time_no_answer=time_label)
     await callback.answer()
-
-    if method == "screenshot":
-        text = "Отправьте скриншот профиля."
-    elif method == "text":
-        text = "Отправьте описание профиля текстом."
-    else:  # both
-        text = "Отправьте скриншот профиля с описанием в подписи."
-
-    await callback.message.edit_text(text)
-    await state.set_state(FirstMessageStates.waiting_input)
+    await callback.message.edit_text(
+        "Что было вашим последним сообщением?\n\n"
+        "Отправьте текст или скриншот."
+    )
+    await state.set_state(AntiIgnorStates.waiting_last_message)
 
 
-@router.message(FirstMessageStates.waiting_input, F.photo)
-async def on_first_msg_photo(
+@router.message(AntiIgnorStates.waiting_last_message, F.photo)
+async def on_last_msg_photo(
     message: types.Message, state: FSMContext, db_session: AsyncSession,
 ) -> None:
     data = await state.get_data()
@@ -102,6 +105,7 @@ async def on_first_msg_photo(
     photo = message.photo[-1]
     caption_text = message.caption
     style = data.get("chosen_style")
+    time_no_answer = data.get("time_no_answer", "")
 
     async with download_telegram_photo(message.bot, photo.file_id) as photo_data:
         b64 = photo_bytes_to_base64(photo_data)
@@ -109,20 +113,21 @@ async def on_first_msg_photo(
     await generate_and_send(
         message, state, db_session,
         user_id=user_id,
-        scenario="first_message",
+        scenario="anti_ignor",
         style=style,
         input_text=caption_text,
         image_base64=b64,
         image_file_id=photo.file_id,
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
-        processing_text="Анализирую профиль...",
-        result_header="Варианты первого сообщения:",
+        extra_context=f"Время без ответа: {time_no_answer}",
+        processing_text="Генерирую варианты...",
+        result_header="Варианты для возобновления диалога:",
     )
 
 
-@router.message(FirstMessageStates.waiting_input, F.text)
-async def on_first_msg_text(
+@router.message(AntiIgnorStates.waiting_last_message, F.text)
+async def on_last_msg_text(
     message: types.Message, state: FSMContext, db_session: AsyncSession,
 ) -> None:
     data = await state.get_data()
@@ -133,13 +138,15 @@ async def on_first_msg_text(
         return
 
     style = data.get("chosen_style")
+    time_no_answer = data.get("time_no_answer", "")
 
     await generate_and_send(
         message, state, db_session,
         user_id=user_id,
-        scenario="first_message",
+        scenario="anti_ignor",
         style=style,
         input_text=message.text,
-        processing_text="Анализирую профиль...",
-        result_header="Варианты первого сообщения:",
+        extra_context=f"Время без ответа: {time_no_answer}",
+        processing_text="Генерирую варианты...",
+        result_header="Варианты для возобновления диалога:",
     )

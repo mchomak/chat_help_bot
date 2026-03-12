@@ -24,10 +24,8 @@ def _sanitize(text: str) -> str:
 
 def _extract_json(raw: str) -> dict | None:
     """Attempt to extract a JSON object from raw response text."""
-    # Try direct parse
     raw = raw.strip()
     if raw.startswith("```"):
-        # Remove markdown code fences
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
 
@@ -36,7 +34,6 @@ def _extract_json(raw: str) -> dict | None:
     except json.JSONDecodeError:
         pass
 
-    # Try to find JSON object within the text
     match = re.search(r"\{[\s\S]*\}", raw)
     if match:
         try:
@@ -63,6 +60,40 @@ def parse_first_message_response(raw: str) -> list[str]:
         return [_sanitize(m) for m in data["messages"] if isinstance(m, str) and m.strip()]
     logger.warning("Failed to parse first_message response, attempting line split")
     return _fallback_line_split(raw)
+
+
+def parse_messages_response(raw: str) -> list[str]:
+    """Parse generic messages response (anti_ignor, photo_pickup, etc.)."""
+    data = _extract_json(raw)
+    if data:
+        # Try common keys
+        for key in ("messages", "replies", "options", "items"):
+            if key in data and isinstance(data[key], list):
+                return [_sanitize(m) for m in data[key] if isinstance(m, str) and m.strip()]
+    logger.warning("Failed to parse messages response, attempting line split")
+    return _fallback_line_split(raw)
+
+
+def parse_analyzer_response(raw: str) -> dict:
+    """Parse analyzer response into dict with analysis + items."""
+    data = _extract_json(raw)
+    if data:
+        analysis = []
+        if "analysis" in data and isinstance(data["analysis"], list):
+            analysis = [_sanitize(a) for a in data["analysis"] if isinstance(a, str) and a.strip()]
+
+        items = []
+        for key in ("replies", "messages", "options"):
+            if key in data and isinstance(data[key], list):
+                items = [_sanitize(m) for m in data[key] if isinstance(m, str) and m.strip()]
+                break
+
+        if items:
+            return {"analysis": analysis, "items": items}
+
+    logger.warning("Failed to parse analyzer response, falling back")
+    items = _fallback_line_split(raw)
+    return {"analysis": [], "items": items}
 
 
 def parse_profile_review_response(raw: str) -> dict:

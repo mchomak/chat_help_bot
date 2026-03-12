@@ -1,4 +1,4 @@
-"""Prompts for the "Reply to message" scenario."""
+"""Prompts for the 'Reply to message' scenario (legacy, kept for backward compat)."""
 
 REPLY_SYSTEM = """
 You are a dating communication assistant. The user will provide a chat excerpt
@@ -9,8 +9,9 @@ Requirements for each reply option:
 - Natural, conversational Russian language
 - No bureaucratic or overly formal tone
 - Concise (1-3 sentences each)
-- Diverse in style (playful, sincere, witty, confident — vary across options)
 - Appropriate and respectful
+
+{style_instruction}
 
 {user_context}
 
@@ -34,6 +35,7 @@ The user sent a screenshot of a conversation. Analyse it and generate
 {count} reply options the user can send next.
 """.strip()
 
+# Legacy modifiers
 REPLY_MODIFIER_SOFTER = "Make the replies softer and more gentle in tone."
 REPLY_MODIFIER_CONFIDENT = "Make the replies more confident and assertive, but still respectful."
 REPLY_MODIFIER_SHORTER = "Make each reply very short — ideally one sentence."

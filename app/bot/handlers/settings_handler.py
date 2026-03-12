@@ -9,26 +9,34 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import send_menu
-from app.bot.keyboards.onboarding import gender_keyboard, skip_keyboard
-from app.bot.keyboards.scenarios import back_to_menu_keyboard
+from app.bot.keyboards.onboarding import (
+    gender_keyboard,
+    role_keyboard,
+    situation_keyboard,
+    skip_keyboard,
+)
 from app.bot.keyboards.settings import settings_menu_keyboard
+from app.bot.keyboards.styles import get_style_label
 from app.bot.states.settings import SettingsEditStates
 from app.db.repositories import user_repo
-from app.services.access_service import check_access
 
 router = Router(name="settings")
 
 GENDER_LABELS = {"male": "Мужчина", "female": "Женщина"}
-ACCESS_LABELS = {
-    "none": "Нет доступа",
-    "trial": "Пробный период",
-    "expired": "Пробный период закончился",
-    "paid": "Оплачен",
+SITUATION_LABELS = {
+    "dating_app": "Сайт знакомств",
+    "real_life": "Реальное общение",
+    "other": "Другое",
+}
+ROLE_LABELS = {
+    "initiator": "Инициатор",
+    "continuing": "Продолжаю диалог",
+    "meeting": "Хочу перейти к встрече",
+    "other": "Другое",
 }
 
 IDENTITY_EDIT_PROMPT = (
-    "Расскажите коротко о себе (до 300 символов).\n\n"
+    "Расскажите коротко о себе — «Идеальная версия» (до 300 символов).\n\n"
     "Например: «Мне 28 лет, работаю дизайнером, люблю путешествия "
     "и чёрный юмор. Общаюсь легко, но иногда стесняюсь писать первым».\n\n"
     "Бот будет учитывать это при генерации, чтобы ответы "
@@ -36,13 +44,17 @@ IDENTITY_EDIT_PROMPT = (
     "Нажмите «Пропустить» для сброса."
 )
 
+CHAR_LIMIT = 300
+
 
 def _format_settings(s) -> str:
     lines = [
         "Текущие настройки:\n",
         f"Пол: {GENDER_LABELS.get(s.gender, s.gender or 'не указан')}",
-        f"Стиль общения: {s.communication_style or 'не указан'}",
-        f"О себе: {s.ai_identity_text or 'не указано'}",
+        f"Ситуация: {SITUATION_LABELS.get(s.situation_type, s.situation_type or 'не указана')}",
+        f"Роль: {ROLE_LABELS.get(s.communication_role, s.communication_role or 'не указана')}",
+        f"Идеальная версия: {s.ai_identity_text or 'не указано'}",
+        f"Стиль по умолчанию: {get_style_label(s.default_style) if s.default_style else 'не выбран'}",
     ]
     return "\n".join(lines)
 
@@ -83,8 +95,7 @@ async def save_gender(callback: types.CallbackQuery, state: FSMContext, db_sessi
     value = callback.data.split(":")[-1]
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
-    v = None if value == "skip" else value
-    await user_repo.update_settings(db_session, user_id, gender=v)
+    await user_repo.update_settings(db_session, user_id, gender=value)
     await db_session.commit()
     await callback.answer("Сохранено!")
     await state.set_state(None)
@@ -92,38 +103,46 @@ async def save_gender(callback: types.CallbackQuery, state: FSMContext, db_sessi
     await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
 
 
-# --- Edit style ---
-@router.callback_query(F.data == "set:edit:style")
-async def edit_style(callback: types.CallbackQuery, state: FSMContext) -> None:
+# --- Edit situation ---
+@router.callback_query(F.data == "set:edit:situation")
+async def edit_situation(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    await state.set_state(SettingsEditStates.editing_style)
-    await callback.message.edit_text(
-        "Введите описание стиля общения (или /cancel для отмены):",
-        reply_markup=skip_keyboard(),
-    )
+    await state.set_state(SettingsEditStates.editing_situation)
+    await callback.message.edit_text("Выберите ситуацию:", reply_markup=situation_keyboard())
 
 
-@router.callback_query(SettingsEditStates.editing_style, F.data == "onb:skip")
-async def skip_style(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+@router.callback_query(SettingsEditStates.editing_situation, F.data.startswith("onb:situation:"))
+async def save_situation(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    value = callback.data.split(":")[-1]
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
-    await user_repo.update_settings(db_session, user_id, communication_style=None)
+    await user_repo.update_settings(db_session, user_id, situation_type=value)
     await db_session.commit()
-    await callback.answer("Сброшено!")
+    await callback.answer("Сохранено!")
     await state.set_state(None)
     s = await user_repo.get_user_settings(db_session, user_id)
     await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
 
 
-@router.message(SettingsEditStates.editing_style)
-async def save_style_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+# --- Edit role ---
+@router.callback_query(F.data == "set:edit:role")
+async def edit_role(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(SettingsEditStates.editing_role)
+    await callback.message.edit_text("Выберите роль:", reply_markup=role_keyboard())
+
+
+@router.callback_query(SettingsEditStates.editing_role, F.data.startswith("onb:role:"))
+async def save_role(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    value = callback.data.split(":")[-1]
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
-    await user_repo.update_settings(db_session, user_id, communication_style=message.text[:500])
+    await user_repo.update_settings(db_session, user_id, communication_role=value)
     await db_session.commit()
+    await callback.answer("Сохранено!")
     await state.set_state(None)
     s = await user_repo.get_user_settings(db_session, user_id)
-    await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
 
 
 # --- Edit identity ---
@@ -149,8 +168,11 @@ async def skip_identity(callback: types.CallbackQuery, state: FSMContext, db_ses
 @router.message(SettingsEditStates.editing_identity)
 async def save_identity_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
     text = message.text or ""
-    if len(text) > 300:
-        await message.answer("Текст слишком длинный (макс. 300 символов). Пожалуйста, сократите.")
+    if len(text) > CHAR_LIMIT:
+        await message.answer(
+            f"Текст слишком длинный ({len(text)}/{CHAR_LIMIT} символов). "
+            "Пожалуйста, сократите."
+        )
         return
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
@@ -169,20 +191,13 @@ async def reset_all(callback: types.CallbackQuery, state: FSMContext, db_session
     await user_repo.update_settings(
         db_session, user_id,
         gender=None,
+        situation_type=None,
+        communication_role=None,
         communication_style=None,
         ai_identity_text=None,
+        default_style=None,
     )
     await db_session.commit()
     await callback.answer("Все настройки сброшены!")
     s = await user_repo.get_user_settings(db_session, user_id)
     await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
-
-
-# --- Access status ---
-@router.callback_query(F.data == "set:access_status")
-async def show_access_status(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
-    data = await state.get_data()
-    user_id = uuid.UUID(data["user_id"])
-    status = await check_access(db_session, user_id)
-    label = ACCESS_LABELS.get(status, status)
-    await callback.answer(f"Статус доступа: {label}", show_alert=True)
