@@ -10,3 +10,6 @@ venv/
 *.sqlite3
 /tmp/
 .pytest_cache/
+/proxy.txt
+/image
+/test.txt
