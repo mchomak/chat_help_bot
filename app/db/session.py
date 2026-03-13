@@ -24,7 +24,7 @@ def get_engine() -> AsyncEngine:
             max_overflow=settings.db.max_overflow,
             pool_recycle=settings.db.pool_recycle,
             pool_pre_ping=True,
-            echo=settings.debug,
+            echo=False,
         )
     return _engine
 

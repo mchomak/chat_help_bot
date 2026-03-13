@@ -17,6 +17,10 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+# Suppress noisy SQLAlchemy INFO logs (connection pool, SQL echo)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
