@@ -1,6 +1,7 @@
 """Onboarding flow handler (FSM-based).
 
-Steps: 1) Gender  2) Situation  3) Role  4) Ideal version (optional)
+Steps: 1) Gender  2) Age  3) City  4) Goals  5) Interests
+       6) Situation  7) Role  8) About me (identity)
 """
 
 from __future__ import annotations
@@ -12,14 +13,21 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import send_menu
-from app.bot.keyboards.onboarding import role_keyboard, situation_keyboard, skip_keyboard
+from app.bot.keyboards.onboarding import (
+    goals_keyboard,
+    role_keyboard,
+    situation_keyboard,
+    skip_keyboard,
+)
 from app.bot.states.onboarding import OnboardingStates
 from app.db.repositories import user_repo
 
 router = Router(name="onboarding")
 
+TOTAL_STEPS = 8
+
 IDENTITY_PROMPT = (
-    "Шаг 4/4. Расскажите коротко о себе — «Идеальная версия» (до 300 символов).\n\n"
+    f"Шаг {TOTAL_STEPS}/{TOTAL_STEPS}. Расскажите коротко о себе (до 300 символов).\n\n"
     "Например: «Мне 28 лет, работаю дизайнером, люблю путешествия "
     "и чёрный юмор. Общаюсь легко, но иногда стесняюсь писать первым».\n\n"
     "Бот будет учитывать это при генерации ответов, чтобы они звучали "
@@ -28,6 +36,7 @@ IDENTITY_PROMPT = (
 )
 
 CHAR_LIMIT = 300
+INTERESTS_CHAR_LIMIT = 500
 
 
 # --- Step 1: Gender ---
@@ -39,13 +48,124 @@ async def on_gender(callback: types.CallbackQuery, state: FSMContext, db_session
     await db_session.commit()
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 2/4. Выберите ситуацию:",
+        "Шаг 2/8. Сколько вам лет?\n\nВведите число или нажмите «Пропустить».",
+        reply_markup=skip_keyboard(),
+    )
+    await state.set_state(OnboardingStates.age)
+
+
+# --- Step 2: Age ---
+@router.callback_query(OnboardingStates.age, F.data == "onb:skip")
+async def on_age_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await callback.message.edit_text(
+        "Шаг 3/8. Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
+        reply_markup=skip_keyboard(),
+    )
+    await state.set_state(OnboardingStates.city)
+
+
+@router.message(OnboardingStates.age)
+async def on_age_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if not text.isdigit() or not (13 <= int(text) <= 120):
+        await message.answer("Пожалуйста, введите корректный возраст (число от 13 до 120).")
+        return
+    data = await state.get_data()
+    await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), age=int(text))
+    await db_session.commit()
+    await message.answer(
+        "Шаг 3/8. Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
+        reply_markup=skip_keyboard(),
+    )
+    await state.set_state(OnboardingStates.city)
+
+
+# --- Step 3: City ---
+@router.callback_query(OnboardingStates.city, F.data == "onb:skip")
+async def on_city_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await callback.message.edit_text(
+        "Шаг 4/8. Какая у вас цель?",
+        reply_markup=goals_keyboard(),
+    )
+    await state.set_state(OnboardingStates.goals)
+
+
+@router.message(OnboardingStates.city)
+async def on_city_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if len(text) > 100:
+        await message.answer("Слишком длинное название. Максимум 100 символов.")
+        return
+    data = await state.get_data()
+    await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), city=text)
+    await db_session.commit()
+    await message.answer(
+        "Шаг 4/8. Какая у вас цель?",
+        reply_markup=goals_keyboard(),
+    )
+    await state.set_state(OnboardingStates.goals)
+
+
+# --- Step 4: Goals ---
+@router.callback_query(OnboardingStates.goals, F.data.startswith("onb:goals:"))
+async def on_goals(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    value = callback.data.split(":")[-1]
+    data = await state.get_data()
+    await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), goals=value)
+    await db_session.commit()
+    await callback.answer()
+    await callback.message.edit_text(
+        "Шаг 5/8. Расскажите о своих интересах и хобби (до 500 символов).\n\n"
+        "Нажмите «Пропустить», если не хотите заполнять.",
+        reply_markup=skip_keyboard(),
+    )
+    await state.set_state(OnboardingStates.interests)
+
+
+@router.callback_query(OnboardingStates.goals, F.data == "onb:skip")
+async def on_goals_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await callback.message.edit_text(
+        "Шаг 5/8. Расскажите о своих интересах и хобби (до 500 символов).\n\n"
+        "Нажмите «Пропустить», если не хотите заполнять.",
+        reply_markup=skip_keyboard(),
+    )
+    await state.set_state(OnboardingStates.interests)
+
+
+# --- Step 5: Interests ---
+@router.callback_query(OnboardingStates.interests, F.data == "onb:skip")
+async def on_interests_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await callback.message.edit_text(
+        "Шаг 6/8. Выберите ситуацию:",
         reply_markup=situation_keyboard(),
     )
     await state.set_state(OnboardingStates.situation)
 
 
-# --- Step 2: Situation ---
+@router.message(OnboardingStates.interests)
+async def on_interests_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if len(text) > INTERESTS_CHAR_LIMIT:
+        await message.answer(
+            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} символов). "
+            "Пожалуйста, сократите."
+        )
+        return
+    data = await state.get_data()
+    await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), interests=text)
+    await db_session.commit()
+    await message.answer(
+        "Шаг 6/8. Выберите ситуацию:",
+        reply_markup=situation_keyboard(),
+    )
+    await state.set_state(OnboardingStates.situation)
+
+
+# --- Step 6: Situation ---
 @router.callback_query(OnboardingStates.situation, F.data.startswith("onb:situation:"))
 async def on_situation(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
     value = callback.data.split(":")[-1]
@@ -54,13 +174,13 @@ async def on_situation(callback: types.CallbackQuery, state: FSMContext, db_sess
     await db_session.commit()
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 3/4. Выберите вашу роль:",
+        "Шаг 7/8. Выберите вашу роль:",
         reply_markup=role_keyboard(),
     )
     await state.set_state(OnboardingStates.role)
 
 
-# --- Step 3: Role ---
+# --- Step 7: Role ---
 @router.callback_query(OnboardingStates.role, F.data.startswith("onb:role:"))
 async def on_role(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
     value = callback.data.split(":")[-1]
@@ -72,7 +192,7 @@ async def on_role(callback: types.CallbackQuery, state: FSMContext, db_session: 
     await state.set_state(OnboardingStates.identity)
 
 
-# --- Step 4: Identity / Ideal version (text input or skip) ---
+# --- Step 8: Identity / About me (text input or skip) ---
 @router.callback_query(OnboardingStates.identity, F.data == "onb:skip")
 async def on_identity_skip(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
     await _finish_onboarding(callback, state, db_session)

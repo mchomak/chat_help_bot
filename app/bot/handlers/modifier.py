@@ -15,6 +15,7 @@ from app.bot.keyboards.scenarios import (
     error_with_retry_keyboard,
     post_generation_style_keyboard,
 )
+from app.bot.keyboards.styles import style_keyboard
 from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
@@ -150,13 +151,57 @@ async def on_more_variants(
     )
 
 
+# Mapping of scenario targets to their waiting-input prompts and states
+_SCENARIO_INPUT_PROMPTS = {
+    "first_message": "Отправьте скриншот профиля или описание текстом.",
+    "analyzer": "Отправьте скриншот переписки или переписку текстом.",
+    "anti_ignor": "Отправьте текст или скриншот последнего сообщения.",
+    "photo_pickup": "Отправьте фото.",
+    "reply_message": (
+        "Отправьте скриншот переписки или текст в формате:\n"
+        "Я: ...\nОна: ...\nЯ: ...\nОна: ..."
+    ),
+    "profile_review": "Отправьте описание своего профиля и при желании добавьте скриншот.",
+}
+
+
 # --- "Назад" buttons for scenarios ---
 @router.callback_query(F.data.startswith("back:"))
 async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
     target = callback.data.split(":", 1)[-1]
     await callback.answer()
     await state.set_state(None)
-    # All "back" targets go to main menu for simplicity
+
+    # If target is a known scenario, go back to that scenario's input prompt
+    if target in _SCENARIO_INPUT_PROMPTS:
+        from app.bot.states.scenarios import (
+            AnalyzerStates,
+            AntiIgnorStates,
+            FirstMessageStates,
+            PhotoPickupStates,
+            ProfileReviewStates,
+            ReplyMessageStates,
+        )
+
+        prompt = _SCENARIO_INPUT_PROMPTS[target]
+
+        # Set the appropriate waiting state
+        state_map = {
+            "first_message": FirstMessageStates.waiting_input,
+            "analyzer": AnalyzerStates.waiting_input,
+            "anti_ignor": AntiIgnorStates.waiting_last_message,
+            "photo_pickup": PhotoPickupStates.waiting_photo,
+            "reply_message": ReplyMessageStates.waiting_input,
+            "profile_review": ProfileReviewStates.waiting_input,
+        }
+        waiting_state = state_map.get(target)
+        if waiting_state:
+            await state.set_state(waiting_state)
+
+        await callback.message.edit_text(prompt)
+        return
+
+    # Default: go to main menu
     await send_menu(callback)
 
 

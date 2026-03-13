@@ -1,6 +1,6 @@
 """Handler for the 'First message generator' scenario.
 
-Flow: style selection → input method → input data → AI generation → result.
+Flow: style selection → input data (auto-detect photo/text) → AI generation → result.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.scenarios import input_method_keyboard
 from app.bot.keyboards.styles import get_style_label, style_keyboard
 from app.bot.states.scenarios import FirstMessageStates
 from app.db.repositories import user_repo
@@ -21,6 +20,8 @@ from app.services.image_service import download_telegram_photo, photo_bytes_to_b
 
 router = Router(name="first_message")
 logger = logging.getLogger(__name__)
+
+INPUT_PROMPT = "Отправьте скриншот профиля или описание текстом."
 
 
 @router.callback_query(F.data == "menu:first_message")
@@ -37,16 +38,14 @@ async def start_first_msg_scenario(
 
     await callback.answer()
 
-    # Check if user has a default style
+    # Check if user has a default style — skip style selection
     settings = await user_repo.get_user_settings(db_session, user_id)
     if settings and settings.default_style:
         await state.update_data(chosen_style=settings.default_style)
         await callback.message.edit_text(
-            f"Стиль: {get_style_label(settings.default_style)}\n\n"
-            "Выберите способ ввода:",
-            reply_markup=input_method_keyboard("first_message"),
+            f"Стиль: {get_style_label(settings.default_style)}\n\n{INPUT_PROMPT}"
         )
-        await state.set_state(FirstMessageStates.choosing_input_method)
+        await state.set_state(FirstMessageStates.waiting_input)
     else:
         await callback.message.edit_text(
             "Выберите стиль ответа:",
@@ -63,28 +62,8 @@ async def on_style_chosen(
     await state.update_data(chosen_style=style)
     await callback.answer()
     await callback.message.edit_text(
-        f"Стиль: {get_style_label(style)}\n\nВыберите способ ввода:",
-        reply_markup=input_method_keyboard("first_message"),
+        f"Стиль: {get_style_label(style)}\n\n{INPUT_PROMPT}"
     )
-    await state.set_state(FirstMessageStates.choosing_input_method)
-
-
-@router.callback_query(FirstMessageStates.choosing_input_method, F.data.startswith("input:first_message:"))
-async def on_input_method_chosen(
-    callback: types.CallbackQuery, state: FSMContext,
-) -> None:
-    method = callback.data.split(":")[-1]
-    await state.update_data(input_method=method)
-    await callback.answer()
-
-    if method == "screenshot":
-        text = "Отправьте скриншот профиля."
-    elif method == "text":
-        text = "Отправьте описание профиля текстом."
-    else:  # both
-        text = "Отправьте скриншот профиля с описанием в подписи."
-
-    await callback.message.edit_text(text)
     await state.set_state(FirstMessageStates.waiting_input)
 
 

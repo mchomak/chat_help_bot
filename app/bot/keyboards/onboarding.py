@@ -12,6 +12,18 @@ def gender_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def goals_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Общение", callback_data="onb:goals:communication")],
+            [InlineKeyboardButton(text="Дружба", callback_data="onb:goals:friendship")],
+            [InlineKeyboardButton(text="Отношения", callback_data="onb:goals:relationship")],
+            [InlineKeyboardButton(text="Что-то лёгкое", callback_data="onb:goals:casual")],
+            [InlineKeyboardButton(text="Пропустить", callback_data="onb:skip")],
+        ],
+    )
+
+
 def situation_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
