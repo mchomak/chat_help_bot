@@ -9,7 +9,7 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access, ensure_consent
+from app.bot.handlers.common import ensure_access, ensure_consent, ensure_image_limit
 from app.bot.keyboards.scenarios import error_with_retry_keyboard, profile_result_keyboard
 from app.bot.states.scenarios import ProfileReviewStates
 from app.db.repositories import user_repo
@@ -59,6 +59,10 @@ async def on_profile_photo(
     user_id = uuid.UUID(data["user_id"])
 
     if not await ensure_access(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    if not await ensure_image_limit(message, db_session, user_id):
         await state.set_state(None)
         return
 

@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import base64
 import io
-import logging
-import uuid
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
 from aiogram import Bot
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -21,7 +16,6 @@ async def download_telegram_photo(bot: Bot, file_id: str) -> AsyncIterator[bytes
     buf = io.BytesIO()
     file = await bot.get_file(file_id)
     await bot.download_file(file.file_path, destination=buf)
-    logger.debug("Downloaded file %s (%d bytes)", file_id, buf.tell())
     buf.seek(0)
     try:
         yield buf.read()

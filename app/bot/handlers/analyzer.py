@@ -1,6 +1,6 @@
 """Handler for the 'Dialog analyzer' scenario.
 
-Flow: input method → style selection → input data → AI analysis + suggestions.
+Flow: style selection → input data (auto-detect photo/text) → AI analysis + suggestions.
 """
 
 from __future__ import annotations
@@ -13,10 +13,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.scenarios import (
-    analyzer_input_method_keyboard,
-    suggest_first_message_keyboard,
-)
+from app.bot.keyboards.scenarios import suggest_first_message_keyboard
 from app.bot.keyboards.styles import get_style_label, style_keyboard
 from app.bot.states.scenarios import AnalyzerStates
 from app.db.repositories import user_repo
@@ -24,6 +21,8 @@ from app.services.image_service import download_telegram_photo, photo_bytes_to_b
 
 router = Router(name="analyzer")
 logger = logging.getLogger(__name__)
+
+INPUT_PROMPT = "Отправьте скриншот переписки или переписку текстом."
 
 
 @router.callback_query(F.data == "menu:analyzer")
@@ -39,30 +38,21 @@ async def start_analyzer(
         return
 
     await callback.answer()
-    await callback.message.edit_text(
-        "Выберите способ ввода переписки:",
-        reply_markup=analyzer_input_method_keyboard(),
-    )
-    await state.set_state(AnalyzerStates.choosing_input_method)
 
-
-@router.callback_query(AnalyzerStates.choosing_input_method, F.data.startswith("input:analyzer:"))
-async def on_input_method(
-    callback: types.CallbackQuery, state: FSMContext,
-) -> None:
-    method = callback.data.split(":")[-1]
-    await state.update_data(input_method=method)
-    await callback.answer()
-
-    # Check default style
-    data = await state.get_data()
-    settings_style = None
-    # Style selection
-    await callback.message.edit_text(
-        "Выберите стиль ответа:",
-        reply_markup=style_keyboard("azstyle"),
-    )
-    await state.set_state(AnalyzerStates.choosing_style)
+    # Check if user has a default style — skip style selection
+    settings = await user_repo.get_user_settings(db_session, user_id)
+    if settings and settings.default_style:
+        await state.update_data(chosen_style=settings.default_style)
+        await callback.message.edit_text(
+            f"Стиль: {get_style_label(settings.default_style)}\n\n{INPUT_PROMPT}"
+        )
+        await state.set_state(AnalyzerStates.waiting_input)
+    else:
+        await callback.message.edit_text(
+            "Выберите стиль ответа:",
+            reply_markup=style_keyboard("azstyle"),
+        )
+        await state.set_state(AnalyzerStates.choosing_style)
 
 
 @router.callback_query(AnalyzerStates.choosing_style, F.data.startswith("azstyle:"))
@@ -72,16 +62,9 @@ async def on_style_chosen(
     style = callback.data.split(":")[-1]
     await state.update_data(chosen_style=style)
     await callback.answer()
-
-    data = await state.get_data()
-    method = data.get("input_method", "text")
-
-    if method == "screenshot":
-        text = "Отправьте скриншот переписки."
-    else:
-        text = "Отправьте переписку текстом в формате:\nЯ: ...\nОна: ...\nЯ: ...\nОна: ..."
-
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(
+        f"Стиль: {get_style_label(style)}\n\n{INPUT_PROMPT}"
+    )
     await state.set_state(AnalyzerStates.waiting_input)
 
 

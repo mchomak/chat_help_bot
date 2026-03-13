@@ -5,10 +5,32 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.ai_request import AIRequest, AIResult
+
+MONTHLY_IMAGE_LIMIT = 300
+
+
+async def count_image_requests_this_month(
+    session: AsyncSession, user_id: uuid.UUID,
+) -> int:
+    """Count completed AI requests with images for the current calendar month."""
+    now = datetime.datetime.now(datetime.UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    stmt = (
+        select(func.count())
+        .select_from(AIRequest)
+        .where(
+            AIRequest.user_id == user_id,
+            AIRequest.input_type.in_(["image", "text_image"]),
+            AIRequest.status == "completed",
+            AIRequest.created_at >= month_start,
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
 
 
 async def create_ai_request(

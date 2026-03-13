@@ -17,6 +17,7 @@ from app.bot.keyboards.scenarios import (
     post_generation_keyboard,
 )
 from app.bot.states.onboarding import OnboardingStates
+from app.db.repositories.ai_repo import MONTHLY_IMAGE_LIMIT, count_image_requests_this_month
 from app.services.access_service import AccessStatus, activate_trial, check_access
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ async def start_onboarding(message: types.Message, state: FSMContext) -> None:
         reply_markup=PERSISTENT_MENU,
     )
     await message.answer(
-        "Шаг 1/4. Укажите ваш пол:",
+        "Шаг 1/8. Укажите ваш пол:",
         reply_markup=gender_keyboard(),
     )
     await state.set_state(OnboardingStates.gender)
@@ -74,6 +75,31 @@ async def ensure_access(
         "Пробный период закончился.\n"
         "Для продолжения использования оформите подписку."
     )
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, reply_markup=payment_menu_keyboard())
+    else:
+        await event.answer(text, reply_markup=payment_menu_keyboard())
+    return False
+
+
+LIMIT_EXCEEDED_TEXT = (
+    "Вы использовали все {limit} обработок скриншотов в этом месяце.\n\n"
+    "Чтобы продолжить, можно докупить дополнительный пакет на 100 скринов.\n"
+    "Для покупки перейдите в раздел «Подписка»."
+)
+
+
+async def ensure_image_limit(
+    event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
+    user_id: uuid.UUID,
+) -> bool:
+    """Check monthly image processing limit. Returns True if within limit."""
+    used = await count_image_requests_this_month(session, user_id)
+    if used < MONTHLY_IMAGE_LIMIT:
+        return True
+
+    text = LIMIT_EXCEEDED_TEXT.format(limit=MONTHLY_IMAGE_LIMIT)
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, reply_markup=payment_menu_keyboard())
     else:
@@ -116,6 +142,12 @@ async def generate_and_send(
     """
     from app.db.repositories import user_repo
     from app.services import ai_service
+
+    # Check image limit before processing
+    if image_base64 is not None:
+        if not await ensure_image_limit(event, db_session, user_id):
+            await state.set_state(None)
+            return
 
     if isinstance(event, types.CallbackQuery):
         processing_msg = await event.message.edit_text(processing_text)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, String, Uuid, func
+from sqlalchemy import BigInteger, DateTime, Integer, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,6 +33,10 @@ class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     communication_style: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ai_identity_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
     default_style: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    goals: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    interests: Mapped[str | None] = mapped_column(String(500), nullable=True)
     onboarding_completed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 
