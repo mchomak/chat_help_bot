@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.onboarding import (
     gender_keyboard,
+    goals_keyboard,
     role_keyboard,
     situation_keyboard,
     skip_keyboard,
@@ -34,9 +35,15 @@ ROLE_LABELS = {
     "meeting": "Хочу перейти к встрече",
     "other": "Другое",
 }
+GOALS_LABELS = {
+    "communication": "Общение",
+    "friendship": "Дружба",
+    "relationship": "Отношения",
+    "casual": "Что-то лёгкое",
+}
 
 IDENTITY_EDIT_PROMPT = (
-    "Расскажите коротко о себе — «Идеальная версия» (до 300 символов).\n\n"
+    "Расскажите коротко о себе (до 300 символов).\n\n"
     "Например: «Мне 28 лет, работаю дизайнером, люблю путешествия "
     "и чёрный юмор. Общаюсь легко, но иногда стесняюсь писать первым».\n\n"
     "Бот будет учитывать это при генерации, чтобы ответы "
@@ -45,15 +52,20 @@ IDENTITY_EDIT_PROMPT = (
 )
 
 CHAR_LIMIT = 300
+INTERESTS_CHAR_LIMIT = 500
 
 
 def _format_settings(s) -> str:
     lines = [
         "Текущие настройки:\n",
         f"Пол: {GENDER_LABELS.get(s.gender, s.gender or 'не указан')}",
+        f"Возраст: {s.age or 'не указан'}",
+        f"Город: {s.city or 'не указан'}",
+        f"Цель: {GOALS_LABELS.get(s.goals, s.goals or 'не указана')}",
+        f"Интересы: {s.interests or 'не указаны'}",
         f"Ситуация: {SITUATION_LABELS.get(s.situation_type, s.situation_type or 'не указана')}",
         f"Роль: {ROLE_LABELS.get(s.communication_role, s.communication_role or 'не указана')}",
-        f"Идеальная версия: {s.ai_identity_text or 'не указано'}",
+        f"О себе: {s.ai_identity_text or 'не указано'}",
         f"Стиль по умолчанию: {get_style_label(s.default_style) if s.default_style else 'не выбран'}",
     ]
     return "\n".join(lines)
@@ -101,6 +113,157 @@ async def save_gender(callback: types.CallbackQuery, state: FSMContext, db_sessi
     await state.set_state(None)
     s = await user_repo.get_user_settings(db_session, user_id)
     await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+# --- Edit age ---
+@router.callback_query(F.data == "set:edit:age")
+async def edit_age(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(SettingsEditStates.editing_age)
+    await callback.message.edit_text(
+        "Введите ваш возраст (число от 13 до 120).\n\nНажмите «Пропустить» для сброса.",
+        reply_markup=skip_keyboard(),
+    )
+
+
+@router.callback_query(SettingsEditStates.editing_age, F.data == "onb:skip")
+async def skip_age(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, age=None)
+    await db_session.commit()
+    await callback.answer("Сброшено!")
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+@router.message(SettingsEditStates.editing_age)
+async def save_age(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if not text.isdigit() or not (13 <= int(text) <= 120):
+        await message.answer("Пожалуйста, введите корректный возраст (число от 13 до 120).")
+        return
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, age=int(text))
+    await db_session.commit()
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+# --- Edit city ---
+@router.callback_query(F.data == "set:edit:city")
+async def edit_city(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(SettingsEditStates.editing_city)
+    await callback.message.edit_text(
+        "Введите город.\n\nНажмите «Пропустить» для сброса.",
+        reply_markup=skip_keyboard(),
+    )
+
+
+@router.callback_query(SettingsEditStates.editing_city, F.data == "onb:skip")
+async def skip_city(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, city=None)
+    await db_session.commit()
+    await callback.answer("Сброшено!")
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+@router.message(SettingsEditStates.editing_city)
+async def save_city(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if len(text) > 100:
+        await message.answer("Слишком длинное название. Максимум 100 символов.")
+        return
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, city=text)
+    await db_session.commit()
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+# --- Edit goals ---
+@router.callback_query(F.data == "set:edit:goals")
+async def edit_goals(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(SettingsEditStates.editing_goals)
+    await callback.message.edit_text("Выберите цель:", reply_markup=goals_keyboard())
+
+
+@router.callback_query(SettingsEditStates.editing_goals, F.data.startswith("onb:goals:"))
+async def save_goals(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    value = callback.data.split(":")[-1]
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, goals=value)
+    await db_session.commit()
+    await callback.answer("Сохранено!")
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+@router.callback_query(SettingsEditStates.editing_goals, F.data == "onb:skip")
+async def skip_goals(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, goals=None)
+    await db_session.commit()
+    await callback.answer("Сброшено!")
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+# --- Edit interests ---
+@router.callback_query(F.data == "set:edit:interests")
+async def edit_interests(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(SettingsEditStates.editing_interests)
+    await callback.message.edit_text(
+        "Расскажите о своих интересах и хобби (до 500 символов).\n\n"
+        "Нажмите «Пропустить» для сброса.",
+        reply_markup=skip_keyboard(),
+    )
+
+
+@router.callback_query(SettingsEditStates.editing_interests, F.data == "onb:skip")
+async def skip_interests(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, interests=None)
+    await db_session.commit()
+    await callback.answer("Сброшено!")
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+
+
+@router.message(SettingsEditStates.editing_interests)
+async def save_interests(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    if len(text) > INTERESTS_CHAR_LIMIT:
+        await message.answer(
+            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} символов). "
+            "Пожалуйста, сократите."
+        )
+        return
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, interests=text)
+    await db_session.commit()
+    await state.set_state(None)
+    s = await user_repo.get_user_settings(db_session, user_id)
+    await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
 
 
 # --- Edit situation ---
@@ -191,6 +354,10 @@ async def reset_all(callback: types.CallbackQuery, state: FSMContext, db_session
     await user_repo.update_settings(
         db_session, user_id,
         gender=None,
+        age=None,
+        city=None,
+        goals=None,
+        interests=None,
         situation_type=None,
         communication_role=None,
         communication_style=None,

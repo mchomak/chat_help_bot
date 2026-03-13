@@ -121,10 +121,6 @@ class ProxyManager:
                     timeout=timeout,
                     connector=connector,
                 ) as session:
-                    logger.debug(
-                        "HTTP %s %s via proxy=%s (attempt %d)",
-                        method, url, proxy_url or "direct", attempt + 1,
-                    )
                     start = time.monotonic()
                     resp = await session.request(
                         method, url, proxy=proxy_url, **kwargs,

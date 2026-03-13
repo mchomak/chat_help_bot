@@ -54,5 +54,4 @@ async def chat_completion(
         raise RuntimeError(f"AI API error {resp.status}: {error_msg}")
 
     content = body["choices"][0]["message"]["content"]
-    logger.debug("AI response (model=%s): %s", chosen_model, content[:200])
     return content
