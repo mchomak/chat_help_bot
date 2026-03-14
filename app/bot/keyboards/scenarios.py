@@ -4,23 +4,54 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.keyboards.styles import STYLE_OPTIONS
 
+# Scenario -> restart button label
+_RESTART_LABELS: dict[str, str] = {
+    "first_message": "Новое сообщение",
+    "analyzer": "Новый анализ",
+    "anti_ignor": "Новый анти-игнор",
+    "photo_pickup": "Новый подкат",
+    "flirt": "Новый флирт",
+    "reply_message": "Новый ответ",
+    "profile_review": "Новый профиль",
+}
+
 
 def post_generation_keyboard(scenario: str) -> InlineKeyboardMarkup:
-    """Universal keyboard shown after any AI generation."""
+    """Universal keyboard shown after any AI generation.
+
+    Shows restart button instead of Back — user restarts scenario from scratch.
+    """
+    restart_label = _RESTART_LABELS.get(scenario, "Заново")
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="Изменить стиль",
+                callback_data=f"postgen:chstyle:{scenario}",
+            ),
+            InlineKeyboardButton(
+                text="Еще варианты",
+                callback_data=f"postgen:more:{scenario}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text=restart_label, callback_data=f"restart:{scenario}"),
+            InlineKeyboardButton(text="Меню", callback_data="back:menu"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def post_generation_keyboard_no_restyle(scenario: str) -> InlineKeyboardMarkup:
+    """Post-generation keyboard without style change (for flirt mode)."""
+    restart_label = _RESTART_LABELS.get(scenario, "Заново")
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(
+                text="Еще варианты",
+                callback_data=f"postgen:more:{scenario}",
+            )],
             [
-                InlineKeyboardButton(
-                    text="Изменить стиль",
-                    callback_data=f"postgen:chstyle:{scenario}",
-                ),
-                InlineKeyboardButton(
-                    text="Еще варианты",
-                    callback_data=f"postgen:more:{scenario}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="Назад", callback_data=f"back:{scenario}"),
+                InlineKeyboardButton(text=restart_label, callback_data=f"restart:{scenario}"),
                 InlineKeyboardButton(text="Меню", callback_data="back:menu"),
             ],
         ],
@@ -37,8 +68,9 @@ def post_generation_style_keyboard(scenario: str) -> InlineKeyboardMarkup:
                 callback_data=f"restyle:{scenario}:{key}",
             )]
         )
+    # Back returns to the generated results, not to input
     buttons.append(
-        [InlineKeyboardButton(text="Назад", callback_data=f"back:{scenario}")]
+        [InlineKeyboardButton(text="Назад", callback_data=f"backto:results:{scenario}")]
     )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -101,6 +133,18 @@ def anti_ignor_time_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Назад", callback_data="back:anti_ignor"),
+                InlineKeyboardButton(text="Меню", callback_data="back:menu"),
+            ],
+        ],
+    )
+
+
+def waiting_input_keyboard(back_target: str = "menu") -> InlineKeyboardMarkup:
+    """Keyboard shown on 'send screenshot/photo/text' screens with a Back button."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Назад", callback_data=f"back:{back_target}"),
                 InlineKeyboardButton(text="Меню", callback_data="back:menu"),
             ],
         ],

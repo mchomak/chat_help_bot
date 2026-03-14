@@ -12,11 +12,10 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.scenarios import anti_ignor_time_keyboard
+from app.bot.handlers.common import ensure_access, generate_and_send, get_image_usage_text
+from app.bot.keyboards.scenarios import anti_ignor_time_keyboard, waiting_input_keyboard
 from app.bot.keyboards.styles import get_style_label, style_keyboard
 from app.bot.states.scenarios import AntiIgnorStates
-from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="anti_ignor")
@@ -44,22 +43,12 @@ async def start_anti_ignor(
 
     await callback.answer()
 
-    # Check default style
-    settings = await user_repo.get_user_settings(db_session, user_id)
-    if settings and settings.default_style:
-        await state.update_data(chosen_style=settings.default_style)
-        await callback.message.edit_text(
-            f"Стиль: {get_style_label(settings.default_style)}\n\n"
-            "Сколько времени нет ответа?",
-            reply_markup=anti_ignor_time_keyboard(),
-        )
-        await state.set_state(AntiIgnorStates.choosing_time)
-    else:
-        await callback.message.edit_text(
-            "Выберите стиль ответа:",
-            reply_markup=style_keyboard("aistyle"),
-        )
-        await state.set_state(AntiIgnorStates.choosing_style)
+    # Always show style selection
+    await callback.message.edit_text(
+        "Выберите стиль ответа:",
+        reply_markup=style_keyboard("aistyle"),
+    )
+    await state.set_state(AntiIgnorStates.choosing_style)
 
 
 @router.callback_query(AntiIgnorStates.choosing_style, F.data.startswith("aistyle:"))
@@ -78,15 +67,21 @@ async def on_style_chosen(
 
 @router.callback_query(AntiIgnorStates.choosing_time, F.data.startswith("aitime:"))
 async def on_time_chosen(
-    callback: types.CallbackQuery, state: FSMContext,
+    callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
 ) -> None:
     time_key = callback.data.split(":")[-1]
     time_label = TIME_LABELS.get(time_key, time_key)
     await state.update_data(time_no_answer=time_label)
     await callback.answer()
+
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    usage = await get_image_usage_text(db_session, user_id)
+
     await callback.message.edit_text(
         "Что было вашим последним сообщением?\n\n"
-        "Отправьте текст или скриншот."
+        f"Отправьте текст или скриншот.\n\n📊 {usage}",
+        reply_markup=waiting_input_keyboard("menu"),
     )
     await state.set_state(AntiIgnorStates.waiting_last_message)
 

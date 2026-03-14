@@ -9,13 +9,14 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access, generate_and_send, send_menu
+from app.bot.handlers.common import ensure_access, generate_and_send, get_image_usage_text, send_menu
 from app.bot.keyboards.scenarios import (
     back_to_menu_keyboard,
     error_with_retry_keyboard,
+    post_generation_keyboard,
     post_generation_style_keyboard,
+    waiting_input_keyboard,
 )
-from app.bot.keyboards.styles import style_keyboard
 from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
@@ -27,6 +28,7 @@ RESULT_HEADERS = {
     "analyzer": "Варианты ответа:",
     "anti_ignor": "Варианты для возобновления диалога:",
     "photo_pickup": "Варианты подкатов:",
+    "flirt": "Варианты флирта:",
 }
 
 
@@ -157,6 +159,7 @@ _SCENARIO_INPUT_PROMPTS = {
     "analyzer": "Отправьте скриншот переписки или переписку текстом.",
     "anti_ignor": "Отправьте текст или скриншот последнего сообщения.",
     "photo_pickup": "Отправьте фото.",
+    "flirt": "Отправьте скриншот переписки, фото или описание текстом.",
     "reply_message": (
         "Отправьте скриншот переписки или текст в формате:\n"
         "Я: ...\nОна: ...\nЯ: ...\nОна: ..."
@@ -164,10 +167,84 @@ _SCENARIO_INPUT_PROMPTS = {
     "profile_review": "Отправьте описание своего профиля и при желании добавьте скриншот.",
 }
 
+# Scenario -> menu callback for restart
+_SCENARIO_MENU_CALLBACKS = {
+    "first_message": "menu:first_message",
+    "analyzer": "menu:analyzer",
+    "anti_ignor": "menu:anti_ignor",
+    "photo_pickup": "menu:photo_pickup",
+    "flirt": "menu:flirt",
+}
+
+
+# --- "Назад к результатам" from style picker ---
+@router.callback_query(F.data.startswith("backto:results:"))
+async def on_back_to_results(
+    callback: types.CallbackQuery, state: FSMContext,
+) -> None:
+    """Return from style picker back to the generated results."""
+    scenario = callback.data.split(":")[-1]
+    await callback.answer()
+
+    data = await state.get_data()
+    gen_text = data.get("gen_result_text")
+
+    if gen_text:
+        await callback.message.edit_text(
+            gen_text,
+            reply_markup=post_generation_keyboard(scenario),
+        )
+    else:
+        # Fallback: can't restore results, go to menu
+        await send_menu(callback)
+
+
+# --- "Restart scenario" button ---
+@router.callback_query(F.data.startswith("restart:"))
+async def on_restart_scenario(
+    callback: types.CallbackQuery, state: FSMContext,
+) -> None:
+    """Restart the current scenario from scratch."""
+    scenario = callback.data.split(":", 1)[-1]
+    await callback.answer()
+    await state.set_state(None)
+
+    from app.bot.keyboards.styles import style_keyboard as build_style_kb
+    from app.bot.states.scenarios import (
+        AnalyzerStates,
+        AntiIgnorStates,
+        FirstMessageStates,
+        FlirtStates,
+        PhotoPickupStates,
+    )
+
+    _STYLE_PREFIX = {
+        "first_message": ("fmstyle", FirstMessageStates.choosing_style),
+        "analyzer": ("azstyle", AnalyzerStates.choosing_style),
+        "anti_ignor": ("aistyle", AntiIgnorStates.choosing_style),
+        "photo_pickup": ("ppstyle", PhotoPickupStates.choosing_style),
+    }
+
+    if scenario == "flirt":
+        await state.set_state(FlirtStates.waiting_input)
+        await callback.message.edit_text(
+            _SCENARIO_INPUT_PROMPTS["flirt"],
+            reply_markup=waiting_input_keyboard("menu"),
+        )
+    elif scenario in _STYLE_PREFIX:
+        prefix, fst_state = _STYLE_PREFIX[scenario]
+        await state.set_state(fst_state)
+        await callback.message.edit_text(
+            "Выберите стиль ответа:",
+            reply_markup=build_style_kb(prefix),
+        )
+    else:
+        await send_menu(callback)
+
 
 # --- "Назад" buttons for scenarios ---
 @router.callback_query(F.data.startswith("back:"))
-async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
+async def on_back(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
     target = callback.data.split(":", 1)[-1]
     await callback.answer()
     await state.set_state(None)
@@ -178,6 +255,7 @@ async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
             AnalyzerStates,
             AntiIgnorStates,
             FirstMessageStates,
+            FlirtStates,
             PhotoPickupStates,
             ProfileReviewStates,
             ReplyMessageStates,
@@ -191,6 +269,7 @@ async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
             "analyzer": AnalyzerStates.waiting_input,
             "anti_ignor": AntiIgnorStates.waiting_last_message,
             "photo_pickup": PhotoPickupStates.waiting_photo,
+            "flirt": FlirtStates.waiting_input,
             "reply_message": ReplyMessageStates.waiting_input,
             "profile_review": ProfileReviewStates.waiting_input,
         }
@@ -198,7 +277,18 @@ async def on_back(callback: types.CallbackQuery, state: FSMContext) -> None:
         if waiting_state:
             await state.set_state(waiting_state)
 
-        await callback.message.edit_text(prompt)
+        # Add image usage info to the prompt
+        data = await state.get_data()
+        user_id_str = data.get("user_id")
+        if user_id_str:
+            user_id = uuid.UUID(user_id_str)
+            usage_text = await get_image_usage_text(db_session, user_id)
+            prompt = f"{prompt}\n\n📊 {usage_text}"
+
+        await callback.message.edit_text(
+            prompt,
+            reply_markup=waiting_input_keyboard("menu"),
+        )
         return
 
     # Default: go to main menu

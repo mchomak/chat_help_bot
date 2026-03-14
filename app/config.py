@@ -85,6 +85,7 @@ class AppConfig:
     debug: bool = field(default_factory=lambda: _env("DEBUG", "false").lower() == "true")
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
     temp_dir: Path = field(default_factory=lambda: Path(_env("TEMP_DIR", "/tmp/chat_help_bot")))
+    monthly_image_limit: int = field(default_factory=lambda: _env_int("MONTHLY_IMAGE_LIMIT", 300))
 
 
 settings = AppConfig()

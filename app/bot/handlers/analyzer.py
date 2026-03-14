@@ -12,11 +12,10 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.scenarios import suggest_first_message_keyboard
+from app.bot.handlers.common import ensure_access, generate_and_send, get_image_usage_text
+from app.bot.keyboards.scenarios import nav_keyboard, suggest_first_message_keyboard
 from app.bot.keyboards.styles import get_style_label, style_keyboard
 from app.bot.states.scenarios import AnalyzerStates
-from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="analyzer")
@@ -39,31 +38,29 @@ async def start_analyzer(
 
     await callback.answer()
 
-    # Check if user has a default style — skip style selection
-    settings = await user_repo.get_user_settings(db_session, user_id)
-    if settings and settings.default_style:
-        await state.update_data(chosen_style=settings.default_style)
-        await callback.message.edit_text(
-            f"Стиль: {get_style_label(settings.default_style)}\n\n{INPUT_PROMPT}"
-        )
-        await state.set_state(AnalyzerStates.waiting_input)
-    else:
-        await callback.message.edit_text(
-            "Выберите стиль ответа:",
-            reply_markup=style_keyboard("azstyle"),
-        )
-        await state.set_state(AnalyzerStates.choosing_style)
+    # Always show style selection for analyzer
+    await callback.message.edit_text(
+        "Выберите стиль ответа:",
+        reply_markup=style_keyboard("azstyle"),
+    )
+    await state.set_state(AnalyzerStates.choosing_style)
 
 
 @router.callback_query(AnalyzerStates.choosing_style, F.data.startswith("azstyle:"))
 async def on_style_chosen(
-    callback: types.CallbackQuery, state: FSMContext,
+    callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
 ) -> None:
     style = callback.data.split(":")[-1]
     await state.update_data(chosen_style=style)
     await callback.answer()
+
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    usage = await get_image_usage_text(db_session, user_id)
+
     await callback.message.edit_text(
-        f"Стиль: {get_style_label(style)}\n\n{INPUT_PROMPT}"
+        f"Стиль: {get_style_label(style)}\n\n{INPUT_PROMPT}\n\n📊 {usage}",
+        reply_markup=nav_keyboard("menu"),
     )
     await state.set_state(AnalyzerStates.waiting_input)
 

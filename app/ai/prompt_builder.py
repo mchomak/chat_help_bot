@@ -17,6 +17,11 @@ from app.ai.prompts.first_message import (
     FIRST_MSG_USER_IMAGE,
     FIRST_MSG_USER_TEXT,
 )
+from app.ai.prompts.flirt import (
+    FLIRT_SYSTEM,
+    FLIRT_USER_IMAGE,
+    FLIRT_USER_TEXT,
+)
 from app.ai.prompts.photo_pickup import (
     PHOTO_PICKUP_SYSTEM,
     PHOTO_PICKUP_USER_IMAGE,
@@ -59,6 +64,11 @@ SCENARIO_TEMPLATES = {
         "system": PHOTO_PICKUP_SYSTEM,
         "user_text": None,  # photo_pickup only works with images
         "user_image": PHOTO_PICKUP_USER_IMAGE,
+    },
+    "flirt": {
+        "system": FLIRT_SYSTEM,
+        "user_text": FLIRT_USER_TEXT,
+        "user_image": FLIRT_USER_IMAGE,
     },
     "profile_review": {
         "system": PROFILE_REVIEW_SYSTEM,

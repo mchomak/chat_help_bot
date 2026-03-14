@@ -16,6 +16,7 @@ from app.bot.keyboards.onboarding import (
     situation_keyboard,
     skip_keyboard,
 )
+from app.bot.handlers.common import get_image_usage_text
 from app.bot.keyboards.settings import settings_menu_keyboard
 from app.bot.keyboards.styles import get_style_label
 from app.bot.states.settings import SettingsEditStates
@@ -55,7 +56,7 @@ CHAR_LIMIT = 300
 INTERESTS_CHAR_LIMIT = 500
 
 
-def _format_settings(s) -> str:
+def _format_settings(s, image_usage_text: str | None = None) -> str:
     lines = [
         "Текущие настройки:\n",
         f"Пол: {GENDER_LABELS.get(s.gender, s.gender or 'не указан')}",
@@ -68,6 +69,8 @@ def _format_settings(s) -> str:
         f"О себе: {s.ai_identity_text or 'не указано'}",
         f"Стиль по умолчанию: {get_style_label(s.default_style) if s.default_style else 'не выбран'}",
     ]
+    if image_usage_text:
+        lines.append(f"\n📊 {image_usage_text}")
     return "\n".join(lines)
 
 
@@ -79,7 +82,8 @@ async def cmd_settings(message: types.Message, state: FSMContext, db_session: As
     if s is None:
         await message.answer("Настройки не найдены. Начните с /start.")
         return
-    await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
+    usage = await get_image_usage_text(db_session, user_id)
+    await message.answer(_format_settings(s, usage), reply_markup=settings_menu_keyboard())
 
 
 @router.callback_query(F.data == "menu:settings")
@@ -91,7 +95,8 @@ async def cb_settings(callback: types.CallbackQuery, state: FSMContext, db_sessi
         await callback.answer("Настройки не найдены.")
         return
     await callback.answer()
-    await callback.message.edit_text(_format_settings(s), reply_markup=settings_menu_keyboard())
+    usage = await get_image_usage_text(db_session, user_id)
+    await callback.message.edit_text(_format_settings(s, usage), reply_markup=settings_menu_keyboard())
 
 
 # --- Edit gender ---

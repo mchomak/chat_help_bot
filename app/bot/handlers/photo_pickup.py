@@ -12,10 +12,10 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.handlers.common import ensure_access, generate_and_send
-from app.bot.keyboards.styles import get_style_label, style_keyboard
+from app.bot.handlers.common import ensure_access, generate_and_send, get_image_usage_text
+from app.bot.keyboards.scenarios import waiting_input_keyboard
+from app.bot.keyboards.styles import style_keyboard
 from app.bot.states.scenarios import PhotoPickupStates
-from app.db.repositories import user_repo
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="photo_pickup")
@@ -36,30 +36,30 @@ async def start_photo_pickup(
 
     await callback.answer()
 
-    settings = await user_repo.get_user_settings(db_session, user_id)
-    if settings and settings.default_style:
-        await state.update_data(chosen_style=settings.default_style)
-        await callback.message.edit_text(
-            f"Стиль: {get_style_label(settings.default_style)}\n\n"
-            "Отправьте фото."
-        )
-        await state.set_state(PhotoPickupStates.waiting_photo)
-    else:
-        await callback.message.edit_text(
-            "Выберите стиль ответа:",
-            reply_markup=style_keyboard("ppstyle"),
-        )
-        await state.set_state(PhotoPickupStates.choosing_style)
+    # Always show style selection
+    await callback.message.edit_text(
+        "Выберите стиль ответа:",
+        reply_markup=style_keyboard("ppstyle"),
+    )
+    await state.set_state(PhotoPickupStates.choosing_style)
 
 
 @router.callback_query(PhotoPickupStates.choosing_style, F.data.startswith("ppstyle:"))
 async def on_style_chosen(
-    callback: types.CallbackQuery, state: FSMContext,
+    callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
 ) -> None:
     style = callback.data.split(":")[-1]
     await state.update_data(chosen_style=style)
     await callback.answer()
-    await callback.message.edit_text("Отправьте фото.")
+
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    usage = await get_image_usage_text(db_session, user_id)
+
+    await callback.message.edit_text(
+        f"Отправьте фото.\n\n📊 {usage}",
+        reply_markup=waiting_input_keyboard("menu"),
+    )
     await state.set_state(PhotoPickupStates.waiting_photo)
 
 
