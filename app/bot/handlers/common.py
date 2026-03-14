@@ -15,9 +15,11 @@ from app.bot.keyboards.payment import payment_menu_keyboard
 from app.bot.keyboards.scenarios import (
     error_with_retry_keyboard,
     post_generation_keyboard,
+    post_generation_keyboard_no_restyle,
 )
 from app.bot.states.onboarding import OnboardingStates
-from app.db.repositories.ai_repo import MONTHLY_IMAGE_LIMIT, count_image_requests_this_month
+from app.config import settings as app_settings
+from app.db.repositories.ai_repo import count_image_requests_this_month
 from app.services.access_service import AccessStatus, activate_trial, check_access
 
 logger = logging.getLogger(__name__)
@@ -95,16 +97,28 @@ async def ensure_image_limit(
     user_id: uuid.UUID,
 ) -> bool:
     """Check monthly image processing limit. Returns True if within limit."""
+    limit = app_settings.monthly_image_limit
     used = await count_image_requests_this_month(session, user_id)
-    if used < MONTHLY_IMAGE_LIMIT:
+    if used < limit:
         return True
 
-    text = LIMIT_EXCEEDED_TEXT.format(limit=MONTHLY_IMAGE_LIMIT)
+    text = LIMIT_EXCEEDED_TEXT.format(limit=limit)
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, reply_markup=payment_menu_keyboard())
     else:
         await event.answer(text, reply_markup=payment_menu_keyboard())
     return False
+
+
+async def get_image_usage_text(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+) -> str:
+    """Return human-readable image usage string like 'Осталось 205/300 скриншотов в этом месяце'."""
+    limit = app_settings.monthly_image_limit
+    used = await count_image_requests_this_month(session, user_id)
+    remaining = max(0, limit - used)
+    return f"Осталось {remaining}/{limit} скриншотов в этом месяце"
 
 
 def settings_kwargs(settings) -> dict:
@@ -195,7 +209,9 @@ async def generate_and_send(
         for i, item in enumerate(items, 1):
             text_parts.append(f"{i}. {item}")
 
-        # Save context for re-generation
+        result_text = "\n".join(text_parts)
+
+        # Save context for re-generation and back-to-results
         await state.update_data(
             gen_scenario=scenario,
             gen_style=style,
@@ -203,13 +219,16 @@ async def generate_and_send(
             gen_image_file_id=image_file_id,
             gen_extra_context=extra_context,
             gen_request_id=request_id,
+            gen_result_text=result_text,
         )
         await state.set_state(None)
 
-        await processing_msg.edit_text(
-            "\n".join(text_parts),
-            reply_markup=post_generation_keyboard(scenario),
-        )
+        # Flirt has no style change option
+        if scenario == "flirt":
+            keyboard = post_generation_keyboard_no_restyle(scenario)
+        else:
+            keyboard = post_generation_keyboard(scenario)
+        await processing_msg.edit_text(result_text, reply_markup=keyboard)
 
     except Exception:
         logger.exception("Generation failed for scenario=%s", scenario)

@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.ai_request import AIRequest, AIResult
 
-MONTHLY_IMAGE_LIMIT = 300
-
 
 async def count_image_requests_this_month(
     session: AsyncSession, user_id: uuid.UUID,

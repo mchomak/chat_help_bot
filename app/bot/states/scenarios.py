@@ -30,6 +30,10 @@ class PhotoPickupStates(StatesGroup):
     waiting_photo = State()
 
 
+class FlirtStates(StatesGroup):
+    waiting_input = State()
+
+
 class PostGenStates(StatesGroup):
     """State for post-generation style change."""
     choosing_new_style = State()
