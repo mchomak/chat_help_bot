@@ -38,6 +38,8 @@ async def chat_completion(
     }
     timeout = aiohttp.ClientTimeout(total=settings.ai.request_timeout)
 
+    logger.info("chat_completion: model=%s, messages=%d, has_image=%s", chosen_model, len(messages), has_image)
+
     resp = await proxy_manager.request_with_rotation(
         "POST",
         url,
@@ -50,8 +52,13 @@ async def chat_completion(
 
     if resp.status != 200:
         error_msg = body.get("error", {}).get("message", str(body))
-        logger.error("AI API error %d: %s", resp.status, error_msg)
+        logger.error("chat_completion: API error %d: %s", resp.status, error_msg)
         raise RuntimeError(f"AI API error {resp.status}: {error_msg}")
 
     content = body["choices"][0]["message"]["content"]
+    usage = body.get("usage", {})
+    logger.info(
+        "chat_completion: success, response_len=%d, tokens_used=%s",
+        len(content), usage.get("total_tokens", "N/A"),
+    )
     return content

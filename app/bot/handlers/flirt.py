@@ -33,6 +33,7 @@ async def start_flirt(
 ) -> None:
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
+    logger.info("flirt: start, user_id=%s", user_id)
 
     if not await ensure_access(callback, db_session, user_id):
         return
@@ -55,16 +56,21 @@ async def on_flirt_photo(
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
+    photo = message.photo[-1]
+    caption_text = message.caption
+    logger.info(
+        "flirt: received photo, user_id=%s, file_id=%s, caption=%s",
+        user_id, photo.file_id, bool(caption_text),
+    )
+
     if not await ensure_access(message, db_session, user_id):
         await state.set_state(None)
         return
 
-    photo = message.photo[-1]
-    caption_text = message.caption
-
     async with download_telegram_photo(message.bot, photo.file_id) as photo_data:
         b64 = photo_bytes_to_base64(photo_data)
 
+    logger.info("flirt: photo downloaded, sending to generate_and_send")
     await generate_and_send(
         message, state, db_session,
         user_id=user_id,
@@ -86,6 +92,10 @@ async def on_flirt_text(
 ) -> None:
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
+    logger.info(
+        "flirt: received text, user_id=%s, text_len=%d",
+        user_id, len(message.text or ""),
+    )
 
     if not await ensure_access(message, db_session, user_id):
         await state.set_state(None)

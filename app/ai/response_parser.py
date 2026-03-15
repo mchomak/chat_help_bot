@@ -39,8 +39,9 @@ def _extract_json(raw: str) -> dict | None:
         try:
             return json.loads(match.group())
         except json.JSONDecodeError:
-            pass
+            logger.warning("_extract_json: regex found JSON-like block but failed to parse: %.200s", match.group()[:200])
 
+    logger.warning("_extract_json: could not extract JSON from response (len=%d): %.200s", len(raw), raw[:200])
     return None
 
 

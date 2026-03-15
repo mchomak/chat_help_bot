@@ -157,6 +157,11 @@ async def generate_and_send(
     from app.db.repositories import user_repo
     from app.services import ai_service
 
+    logger.info(
+        "generate_and_send: scenario=%s, style=%s, has_text=%s, has_image=%s, user_id=%s",
+        scenario, style, bool(input_text), image_base64 is not None, user_id,
+    )
+
     # Check image limit before processing
     if image_base64 is not None:
         if not await ensure_image_limit(event, db_session, user_id):
@@ -190,7 +195,17 @@ async def generate_and_send(
         analysis = result.get("analysis", [])
         request_id = result.get("request_id", "")
 
+        logger.info(
+            "generate_and_send: result for scenario=%s — items=%d, analysis=%d, request_id=%s",
+            scenario, len(items), len(analysis), request_id,
+        )
+
         if not items:
+            logger.warning(
+                "generate_and_send: empty items for scenario=%s, "
+                "result_keys=%s, request_id=%s",
+                scenario, list(result.keys()), request_id,
+            )
             await processing_msg.edit_text(
                 "Не удалось сгенерировать варианты.",
                 reply_markup=error_with_retry_keyboard(),
