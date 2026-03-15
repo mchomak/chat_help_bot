@@ -16,12 +16,40 @@ STYLE_OPTIONS: dict[str, str] = {
 
 # Style key -> prompt instruction for AI
 STYLE_PROMPTS: dict[str, str] = {
-    "flirt": "Flirty, playful tone with subtle hints and light teasing.",
-    "bold": "Bold, provocative, edgy tone — confident and slightly daring.",
-    "romantic": "Romantic, poetic tone — warm, heartfelt, with beautiful expressive language.",
-    "intellectual": "Intellectual, deep tone — thoughtful, clever, with substance and wit.",
-    "funny": "Maximum humor — witty, funny, entertaining, creative jokes and wordplay.",
-    "calm": "Calm, confident tone — relaxed, assured, natural and easygoing.",
+    "flirt": (
+        "STYLE: Flirty and playful. Use subtle hints, double meanings, light teasing, "
+        "and create romantic tension. Be charming but not vulgar. Add intrigue — make them "
+        "curious and wanting more. Think 'confident flirt at a party', not 'cheesy pickup artist'."
+    ),
+    "bold": (
+        "STYLE: Bold, daring, and provocative. Be confidently direct — say what others "
+        "wouldn't dare. Use sharp wit, unexpected takes, and edgy humour. Think 'the person "
+        "who owns the room' — self-assured without being rude. Take creative risks."
+    ),
+    "romantic": (
+        "STYLE: Romantic and poetic. Use warm, heartfelt language with beautiful phrasing. "
+        "Create a sense of intimacy and emotional depth. Reference feelings, sensations, "
+        "and meaningful moments. Think 'a handwritten letter', not 'a greeting card'. "
+        "Be genuine and sincere, not cheesy."
+    ),
+    "intellectual": (
+        "STYLE: Intellectual and deep. Show genuine curiosity and thoughtfulness. Use clever "
+        "wordplay, references, and observations that reveal depth. Ask questions that make "
+        "people think. Think 'fascinating conversation at a dinner party'. Substance over "
+        "surface — but still warm and engaging, not cold or pretentious."
+    ),
+    "funny": (
+        "STYLE: Maximum humour. Be genuinely funny — witty observations, clever jokes, "
+        "creative wordplay, absurd comparisons, playful self-deprecation. Think 'the funniest "
+        "person in the group chat'. Each option should make someone laugh or at least smile. "
+        "Humour should be smart, not crude."
+    ),
+    "calm": (
+        "STYLE: Calm and confident. Relaxed, natural, easygoing — like someone who's "
+        "comfortable in their own skin. No trying too hard, no overthinking. Simple, "
+        "direct language. Think 'cool and collected'. Show interest without chasing. "
+        "Less is more — confidence comes through in brevity and ease."
+    ),
 }
 
 DEFAULT_STYLE_DESCRIPTION = "вежливо, уверенно, естественно"
