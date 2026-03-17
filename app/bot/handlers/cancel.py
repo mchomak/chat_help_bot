@@ -15,7 +15,7 @@ router = Router(name="cancel")
 async def cmd_cancel(message: types.Message, state: FSMContext) -> None:
     current = await state.get_state()
     if current is None:
-        await message.answer("Нет активного действия для отмены.")
+        await message.answer("Нечего отменять — вы в главном меню.")
         await send_menu(message)
         return
     await state.set_state(None)

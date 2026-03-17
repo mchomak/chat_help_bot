@@ -17,13 +17,13 @@ from app.services.consent_service import has_consent
 router = Router(name="start")
 
 CONSENT_TEXT = (
-    "Привет! Я — бот-помощник для знакомств.\n\n"
-    "Перед началом работы необходимо ваше согласие "
-    "на обработку персональных данных.\n\n"
+    "👋 Привет! Я помогаю писать первые сообщения, отвечать в переписке "
+    "и вообще чувствовать себя увереннее в знакомствах.\n\n"
+    "Перед началом нужно ваше согласие на обработку данных:\n\n"
     "• Вы отправляете текст и/или скриншоты для анализа\n"
     "• Данные используются для формирования AI-ответов\n"
     "• Сервис не гарантирует результат общения\n"
-    "• Вы подтверждаете согласие на обработку переданных данных\n\n"
+    "• Продолжая, вы принимаете условия обработки переданных данных\n\n"
     "Подтверждаете?"
 )
 
@@ -58,7 +58,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db_session: Async
         # Already consented — check if onboarding done
         settings = await user_repo.get_user_settings(db_session, user.id)
         if settings and settings.onboarding_completed:
-            await message.answer("С возвращением!", reply_markup=PERSISTENT_MENU)
+            await message.answer("С возвращением! 👋", reply_markup=PERSISTENT_MENU)
             await send_menu(message)
             return
 

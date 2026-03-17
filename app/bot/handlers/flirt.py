@@ -21,7 +21,7 @@ from app.services.image_service import download_telegram_photo, photo_bytes_to_b
 router = Router(name="flirt")
 logger = logging.getLogger(__name__)
 
-INPUT_PROMPT = "Отправьте скриншот переписки, фото или описание текстом."
+INPUT_PROMPT = "Отправьте скриншот переписки, фото или опишите ситуацию текстом."
 FIXED_STYLE = "flirt"
 
 
@@ -81,8 +81,8 @@ async def on_flirt_photo(
         image_file_id=photo.file_id,
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
-        processing_text="Генерирую варианты...",
-        result_header="Варианты флирта:",
+        processing_text="💬 Генерирую варианты флирта...",
+        result_header="💬 Варианты флирта:",
     )
 
 
@@ -107,6 +107,6 @@ async def on_flirt_text(
         scenario="flirt",
         style=FIXED_STYLE,
         input_text=message.text,
-        processing_text="Генерирую варианты...",
-        result_header="Варианты флирта:",
+        processing_text="💬 Генерирую варианты флирта...",
+        result_header="💬 Варианты флирта:",
     )

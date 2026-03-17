@@ -47,7 +47,8 @@ async def start_profile_review(
     await callback.answer()
     await state.set_state(ProfileReviewStates.waiting_input)
     await callback.message.edit_text(
-        "Отправьте описание своего профиля и при желании добавьте скриншот."
+        "Опишите свой профиль текстом — или добавьте скриншот. "
+        "Можно отправить и то, и другое."
     )
 
 
@@ -68,7 +69,7 @@ async def on_profile_photo(
 
     photo = message.photo[-1]
     caption_text = message.caption
-    processing_msg = await message.answer("Анализирую профиль...")
+    processing_msg = await message.answer("🔍 Анализирую ваш профиль...")
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
@@ -95,7 +96,7 @@ async def on_profile_photo(
             retry_caption=caption_text,
         )
         await processing_msg.edit_text(
-            "Произошла ошибка при обработке.",
+            "Что-то пошло не так. Попробуйте ещё раз.",
             reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
@@ -112,7 +113,7 @@ async def on_profile_text(
         await state.set_state(None)
         return
 
-    processing_msg = await message.answer("Анализирую профиль...")
+    processing_msg = await message.answer("🔍 Анализирую ваш профиль...")
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
@@ -133,7 +134,7 @@ async def on_profile_text(
             retry_caption=None,
         )
         await processing_msg.edit_text(
-            "Произошла ошибка при обработке.",
+            "Что-то пошло не так. Попробуйте ещё раз.",
             reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)
@@ -141,32 +142,32 @@ async def on_profile_text(
 
 def _format_profile_review(result: dict) -> str:
     """Format structured profile review into readable text."""
-    parts: list[str] = ["Разбор вашего профиля:\n"]
+    parts: list[str] = ["📋 Разбор вашего профиля:\n"]
 
     strengths = result.get("strengths", [])
     if strengths:
-        parts.append("Сильные стороны:")
+        parts.append("✅ Сильные стороны:")
         for s in strengths:
             parts.append(f"  + {s}")
         parts.append("")
 
     weaknesses = result.get("weaknesses", [])
     if weaknesses:
-        parts.append("Слабые места:")
+        parts.append("⚠️ Слабые места:")
         for w in weaknesses:
-            parts.append(f"  - {w}")
+            parts.append(f"  − {w}")
         parts.append("")
 
     improvements = result.get("improvements", [])
     if improvements:
-        parts.append("Что стоит улучшить:")
+        parts.append("🔧 Что улучшить:")
         for imp in improvements:
             parts.append(f"  • {imp}")
         parts.append("")
 
     recommendations = result.get("recommendations", [])
     if recommendations:
-        parts.append("Рекомендации:")
+        parts.append("💡 Рекомендации:")
         for r in recommendations:
             parts.append(f"  → {r}")
 
@@ -180,7 +181,7 @@ async def _send_profile_result(
 
     if not any(result.get(k) for k in ("strengths", "weaknesses", "improvements", "recommendations")):
         await msg.edit_text(
-            "Не удалось проанализировать профиль.",
+            "Не удалось проанализировать профиль — попробуйте ещё раз.",
             reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)

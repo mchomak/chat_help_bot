@@ -27,12 +27,12 @@ router = Router(name="onboarding")
 TOTAL_STEPS = 8
 
 IDENTITY_PROMPT = (
-    f"Шаг {TOTAL_STEPS}/{TOTAL_STEPS}. Расскажите коротко о себе (до 300 символов).\n\n"
+    f"Шаг {TOTAL_STEPS}/{TOTAL_STEPS} · Расскажите немного о себе (до 300 символов).\n\n"
     "Например: «Мне 28 лет, работаю дизайнером, люблю путешествия "
     "и чёрный юмор. Общаюсь легко, но иногда стесняюсь писать первым».\n\n"
-    "Бот будет учитывать это при генерации ответов, чтобы они звучали "
-    "естественно и подходили именно вам.\n\n"
-    "Нажмите «Пропустить», если не хотите заполнять."
+    "Бот учтёт это при генерации — чтобы сообщения звучали естественно "
+    "и подходили именно вам.\n\n"
+    "Можно пропустить, если не хотите заполнять."
 )
 
 CHAR_LIMIT = 300
@@ -48,7 +48,7 @@ async def on_gender(callback: types.CallbackQuery, state: FSMContext, db_session
     await db_session.commit()
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 2/8. Сколько вам лет?\n\nВведите число или нажмите «Пропустить».",
+        "Шаг 2/8 · Сколько вам лет?\n\nВведите число или нажмите «Пропустить».",
         reply_markup=skip_keyboard(),
     )
     await state.set_state(OnboardingStates.age)
@@ -59,7 +59,7 @@ async def on_gender(callback: types.CallbackQuery, state: FSMContext, db_session
 async def on_age_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 3/8. Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
+        "Шаг 3/8 · Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
         reply_markup=skip_keyboard(),
     )
     await state.set_state(OnboardingStates.city)
@@ -69,13 +69,13 @@ async def on_age_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
 async def on_age_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
     text = (message.text or "").strip()
     if not text.isdigit() or not (13 <= int(text) <= 120):
-        await message.answer("Пожалуйста, введите корректный возраст (число от 13 до 120).")
+        await message.answer("Введите корректный возраст — число от 13 до 120.")
         return
     data = await state.get_data()
     await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), age=int(text))
     await db_session.commit()
     await message.answer(
-        "Шаг 3/8. Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
+        "Шаг 3/8 · Из какого вы города?\n\nВведите название или нажмите «Пропустить».",
         reply_markup=skip_keyboard(),
     )
     await state.set_state(OnboardingStates.city)
@@ -86,7 +86,7 @@ async def on_age_text(message: types.Message, state: FSMContext, db_session: Asy
 async def on_city_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 4/8. Какая у вас цель?",
+        "Шаг 4/8 · Какая у вас цель?",
         reply_markup=goals_keyboard(),
     )
     await state.set_state(OnboardingStates.goals)
@@ -96,13 +96,13 @@ async def on_city_skip(callback: types.CallbackQuery, state: FSMContext) -> None
 async def on_city_text(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
     text = (message.text or "").strip()
     if len(text) > 100:
-        await message.answer("Слишком длинное название. Максимум 100 символов.")
+        await message.answer("Название слишком длинное — максимум 100 символов.")
         return
     data = await state.get_data()
     await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), city=text)
     await db_session.commit()
     await message.answer(
-        "Шаг 4/8. Какая у вас цель?",
+        "Шаг 4/8 · Какая у вас цель?",
         reply_markup=goals_keyboard(),
     )
     await state.set_state(OnboardingStates.goals)
@@ -117,8 +117,8 @@ async def on_goals(callback: types.CallbackQuery, state: FSMContext, db_session:
     await db_session.commit()
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 5/8. Расскажите о своих интересах и хобби (до 500 символов).\n\n"
-        "Нажмите «Пропустить», если не хотите заполнять.",
+        "Шаг 5/8 · Расскажите о своих интересах и хобби (до 500 символов).\n\n"
+        "Можно пропустить — нажмите кнопку ниже.",
         reply_markup=skip_keyboard(),
     )
     await state.set_state(OnboardingStates.interests)
@@ -128,8 +128,8 @@ async def on_goals(callback: types.CallbackQuery, state: FSMContext, db_session:
 async def on_goals_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 5/8. Расскажите о своих интересах и хобби (до 500 символов).\n\n"
-        "Нажмите «Пропустить», если не хотите заполнять.",
+        "Шаг 5/8 · Расскажите о своих интересах и хобби (до 500 символов).\n\n"
+        "Можно пропустить — нажмите кнопку ниже.",
         reply_markup=skip_keyboard(),
     )
     await state.set_state(OnboardingStates.interests)
@@ -140,7 +140,7 @@ async def on_goals_skip(callback: types.CallbackQuery, state: FSMContext) -> Non
 async def on_interests_skip(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 6/8. Выберите ситуацию:",
+        "Шаг 6/8 · Выберите вашу ситуацию:",
         reply_markup=situation_keyboard(),
     )
     await state.set_state(OnboardingStates.situation)
@@ -151,15 +151,15 @@ async def on_interests_text(message: types.Message, state: FSMContext, db_sessio
     text = (message.text or "").strip()
     if len(text) > INTERESTS_CHAR_LIMIT:
         await message.answer(
-            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} символов). "
-            "Пожалуйста, сократите."
+            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} симв.). "
+            "Попробуйте сократить."
         )
         return
     data = await state.get_data()
     await user_repo.update_settings(db_session, uuid.UUID(data["user_id"]), interests=text)
     await db_session.commit()
     await message.answer(
-        "Шаг 6/8. Выберите ситуацию:",
+        "Шаг 6/8 · Выберите вашу ситуацию:",
         reply_markup=situation_keyboard(),
     )
     await state.set_state(OnboardingStates.situation)
@@ -174,7 +174,7 @@ async def on_situation(callback: types.CallbackQuery, state: FSMContext, db_sess
     await db_session.commit()
     await callback.answer()
     await callback.message.edit_text(
-        "Шаг 7/8. Выберите вашу роль:",
+        "Шаг 7/8 · Выберите вашу роль:",
         reply_markup=role_keyboard(),
     )
     await state.set_state(OnboardingStates.role)
@@ -203,8 +203,8 @@ async def on_identity_text(message: types.Message, state: FSMContext, db_session
     text = message.text or ""
     if len(text) > CHAR_LIMIT:
         await message.answer(
-            f"Текст слишком длинный ({len(text)}/{CHAR_LIMIT} символов). "
-            "Пожалуйста, сократите."
+            f"Текст слишком длинный ({len(text)}/{CHAR_LIMIT} симв.). "
+            "Попробуйте сократить."
         )
         return
     data = await state.get_data()
@@ -230,9 +230,9 @@ async def _finish_onboarding(
     await state.set_state(None)
 
     if isinstance(event, types.CallbackQuery):
-        await event.answer("Настройка завершена!")
-        await event.message.edit_text("Настройка завершена! Добро пожаловать.")
+        await event.answer("Настройка завершена ✓")
+        await event.message.edit_text("Всё готово! Теперь бот знает о вас чуть больше 🙌")
         await send_menu(event.message)
     else:
-        await event.answer("Настройка завершена! Добро пожаловать.")
+        await event.answer("Всё готово! Теперь бот знает о вас чуть больше 🙌")
         await send_menu(event)

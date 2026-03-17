@@ -21,7 +21,7 @@ from app.services.image_service import download_telegram_photo, photo_bytes_to_b
 router = Router(name="first_message")
 logger = logging.getLogger(__name__)
 
-INPUT_PROMPT = "Отправьте скриншот профиля или описание текстом."
+INPUT_PROMPT = "Отправьте скриншот профиля или опишите человека текстом."
 
 
 @router.callback_query(F.data == "menu:first_message")
@@ -40,7 +40,7 @@ async def start_first_msg_scenario(
 
     # Always show style selection for first message generator
     await callback.message.edit_text(
-        "Выберите стиль ответа:",
+        "Выберите стиль первого сообщения:",
         reply_markup=style_keyboard("fmstyle"),
     )
     await state.set_state(FirstMessageStates.choosing_style)
@@ -63,6 +63,7 @@ async def on_style_chosen(
         reply_markup=nav_keyboard("menu"),
     )
     await state.set_state(FirstMessageStates.waiting_input)
+
 
 
 @router.message(FirstMessageStates.waiting_input, F.photo)
@@ -93,8 +94,8 @@ async def on_first_msg_photo(
         image_file_id=photo.file_id,
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
-        processing_text="Анализирую профиль...",
-        result_header="Варианты первого сообщения:",
+        processing_text="🔍 Анализирую профиль...",
+        result_header="✉️ Варианты первого сообщения:",
     )
 
 
@@ -117,6 +118,6 @@ async def on_first_msg_text(
         scenario="first_message",
         style=style,
         input_text=message.text,
-        processing_text="Анализирую профиль...",
-        result_header="Варианты первого сообщения:",
+        processing_text="🔍 Анализирую профиль...",
+        result_header="✉️ Варианты первого сообщения:",
     )

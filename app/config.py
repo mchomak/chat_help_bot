@@ -58,6 +58,9 @@ class AIConfig:
     max_tokens: int = field(default_factory=lambda: _env_int("AI_MAX_TOKENS", 2048))
     temperature: float = field(default_factory=lambda: _env_float("AI_TEMPERATURE", 0.8))
     request_timeout: float = field(default_factory=lambda: _env_float("AI_REQUEST_TIMEOUT", 60.0))
+    # Language for AI prompts: "en" (English) or "ru" (Russian).
+    # Does NOT affect user-facing messages — only the language of internal prompts sent to the model.
+    prompt_language: str = field(default_factory=lambda: _env("AI_PROMPT_LANGUAGE", "en").lower())
 
 
 @dataclass(frozen=True)
