@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 async def send_menu(target: types.Message | types.CallbackQuery) -> None:
     """Send main menu message."""
     if isinstance(target, types.CallbackQuery):
-        await target.message.edit_text("Выберите функцию:", reply_markup=main_menu_inline())
+        await target.message.edit_text("Выберите, что хотите сделать:", reply_markup=main_menu_inline())
     else:
         await target.answer(
-            "Выберите функцию:",
+            "Выберите, что хотите сделать:",
             reply_markup=main_menu_inline(),
         )
 
@@ -39,11 +39,11 @@ async def send_menu(target: types.Message | types.CallbackQuery) -> None:
 async def start_onboarding(message: types.Message, state: FSMContext) -> None:
     """Start the onboarding flow from step 1."""
     await message.answer(
-        "Давайте настроим бот под вас.",
+        "Давайте коротко настроим бот под вас — займёт меньше минуты.",
         reply_markup=PERSISTENT_MENU,
     )
     await message.answer(
-        "Шаг 1/8. Укажите ваш пол:",
+        "Шаг 1/8 · Укажите ваш пол:",
         reply_markup=gender_keyboard(),
     )
     await state.set_state(OnboardingStates.gender)
@@ -65,7 +65,7 @@ async def ensure_access(
         access = await activate_trial(session, user_id)
         if access is not None:
             await session.commit()
-            msg = "Пробный период активирован на 2 часа. Приятного использования!"
+            msg = "⏳ Пробный период активирован — у вас есть 2 часа бесплатного доступа."
             if isinstance(event, types.CallbackQuery):
                 await event.answer(msg, show_alert=True)
             else:
@@ -74,8 +74,8 @@ async def ensure_access(
 
     # Trial expired or already used, no paid access
     text = (
-        "Пробный период закончился.\n"
-        "Для продолжения использования оформите подписку."
+        "⌛ Пробный период истёк.\n\n"
+        "Чтобы продолжить — оформите подписку."
     )
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, reply_markup=payment_menu_keyboard())
@@ -85,9 +85,9 @@ async def ensure_access(
 
 
 LIMIT_EXCEEDED_TEXT = (
-    "Вы использовали все {limit} обработок скриншотов в этом месяце.\n\n"
-    "Чтобы продолжить, можно докупить дополнительный пакет на 100 скринов.\n"
-    "Для покупки перейдите в раздел «Подписка»."
+    "📊 Лимит скриншотов на этот месяц исчерпан ({limit} шт.).\n\n"
+    "Для продолжения можно докупить дополнительный пакет на 100 скринов.\n"
+    "Перейдите в раздел «Подписка»."
 )
 
 
@@ -118,7 +118,7 @@ async def get_image_usage_text(
     limit = app_settings.monthly_image_limit
     used = await count_image_requests_this_month(session, user_id)
     remaining = max(0, limit - used)
-    return f"Осталось {remaining}/{limit} скриншотов в этом месяце"
+    return f"Скриншоты: осталось {remaining} из {limit} в этом месяце"
 
 
 def settings_kwargs(settings) -> dict:
@@ -207,7 +207,7 @@ async def generate_and_send(
                 scenario, list(result.keys()), request_id,
             )
             await processing_msg.edit_text(
-                "Не удалось сгенерировать варианты.",
+                "Не получилось сгенерировать варианты — попробуйте ещё раз.",
                 reply_markup=error_with_retry_keyboard(),
             )
             await state.set_state(None)
@@ -215,7 +215,7 @@ async def generate_and_send(
 
         text_parts = []
         if analysis:
-            text_parts.append("Анализ:\n")
+            text_parts.append("📋 Анализ:\n")
             for i, point in enumerate(analysis, 1):
                 text_parts.append(f"{i}. {point}")
             text_parts.append("")
@@ -255,7 +255,7 @@ async def generate_and_send(
             retry_extra_context=extra_context,
         )
         await processing_msg.edit_text(
-            "Произошла ошибка при обработке.",
+            "Что-то пошло не так. Попробуйте ещё раз.",
             reply_markup=error_with_retry_keyboard(),
         )
         await state.set_state(None)

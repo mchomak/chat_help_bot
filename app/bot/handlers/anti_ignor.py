@@ -45,7 +45,7 @@ async def start_anti_ignor(
 
     # Always show style selection
     await callback.message.edit_text(
-        "Выберите стиль ответа:",
+        "Выберите стиль сообщения:",
         reply_markup=style_keyboard("aistyle"),
     )
     await state.set_state(AntiIgnorStates.choosing_style)
@@ -59,7 +59,7 @@ async def on_style_chosen(
     await state.update_data(chosen_style=style)
     await callback.answer()
     await callback.message.edit_text(
-        "Сколько времени нет ответа?",
+        "Сколько времени нет ответа? ⏳",
         reply_markup=anti_ignor_time_keyboard(),
     )
     await state.set_state(AntiIgnorStates.choosing_time)
@@ -80,7 +80,7 @@ async def on_time_chosen(
 
     await callback.message.edit_text(
         "Что было вашим последним сообщением?\n\n"
-        f"Отправьте текст или скриншот.\n\n📊 {usage}",
+        f"Отправьте текст или скриншот переписки.\n\n📊 {usage}",
         reply_markup=waiting_input_keyboard("menu"),
     )
     await state.set_state(AntiIgnorStates.waiting_last_message)
@@ -116,8 +116,8 @@ async def on_last_msg_photo(
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
         extra_context=f"Время без ответа: {time_no_answer}",
-        processing_text="Генерирую варианты...",
-        result_header="Варианты для возобновления диалога:",
+        processing_text="💬 Подбираю варианты...",
+        result_header="🔄 Варианты для возобновления диалога:",
     )
 
 
@@ -142,6 +142,6 @@ async def on_last_msg_text(
         style=style,
         input_text=message.text,
         extra_context=f"Время без ответа: {time_no_answer}",
-        processing_text="Генерирую варианты...",
-        result_header="Варианты для возобновления диалога:",
+        processing_text="💬 Подбираю варианты...",
+        result_header="🔄 Варианты для возобновления диалога:",
     )

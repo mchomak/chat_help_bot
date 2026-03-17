@@ -44,12 +44,12 @@ GOALS_LABELS = {
 }
 
 IDENTITY_EDIT_PROMPT = (
-    "Расскажите коротко о себе (до 300 символов).\n\n"
+    "Расскажите немного о себе (до 300 символов).\n\n"
     "Например: «Мне 28 лет, работаю дизайнером, люблю путешествия "
     "и чёрный юмор. Общаюсь легко, но иногда стесняюсь писать первым».\n\n"
-    "Бот будет учитывать это при генерации, чтобы ответы "
-    "звучали естественно и подходили именно вам.\n\n"
-    "Нажмите «Пропустить» для сброса."
+    "Бот учтёт это при генерации — ответы будут звучать "
+    "естественно и подходить именно вам.\n\n"
+    "Нажмите «Пропустить», чтобы очистить это поле."
 )
 
 CHAR_LIMIT = 300
@@ -58,16 +58,16 @@ INTERESTS_CHAR_LIMIT = 500
 
 def _format_settings(s, image_usage_text: str | None = None) -> str:
     lines = [
-        "Текущие настройки:\n",
-        f"Пол: {GENDER_LABELS.get(s.gender, s.gender or 'не указан')}",
-        f"Возраст: {s.age or 'не указан'}",
-        f"Город: {s.city or 'не указан'}",
-        f"Цель: {GOALS_LABELS.get(s.goals, s.goals or 'не указана')}",
-        f"Интересы: {s.interests or 'не указаны'}",
-        f"Ситуация: {SITUATION_LABELS.get(s.situation_type, s.situation_type or 'не указана')}",
-        f"Роль: {ROLE_LABELS.get(s.communication_role, s.communication_role or 'не указана')}",
-        f"О себе: {s.ai_identity_text or 'не указано'}",
-        f"Стиль по умолчанию: {get_style_label(s.default_style) if s.default_style else 'не выбран'}",
+        "⚙️ Ваши настройки:\n",
+        f"Пол: {GENDER_LABELS.get(s.gender, s.gender or '—')}",
+        f"Возраст: {s.age or '—'}",
+        f"Город: {s.city or '—'}",
+        f"Цель: {GOALS_LABELS.get(s.goals, s.goals or '—')}",
+        f"Интересы: {s.interests or '—'}",
+        f"Ситуация: {SITUATION_LABELS.get(s.situation_type, s.situation_type or '—')}",
+        f"Роль: {ROLE_LABELS.get(s.communication_role, s.communication_role or '—')}",
+        f"О себе: {s.ai_identity_text or '—'}",
+        f"Стиль по умолчанию: {get_style_label(s.default_style) if s.default_style else '—'}",
     ]
     if image_usage_text:
         lines.append(f"\n📊 {image_usage_text}")
@@ -80,7 +80,7 @@ async def cmd_settings(message: types.Message, state: FSMContext, db_session: As
     user_id = uuid.UUID(data["user_id"])
     s = await user_repo.get_user_settings(db_session, user_id)
     if s is None:
-        await message.answer("Настройки не найдены. Начните с /start.")
+        await message.answer("Настройки не найдены. Попробуйте /start.")
         return
     usage = await get_image_usage_text(db_session, user_id)
     await message.answer(_format_settings(s, usage), reply_markup=settings_menu_keyboard())
@@ -92,7 +92,7 @@ async def cb_settings(callback: types.CallbackQuery, state: FSMContext, db_sessi
     user_id = uuid.UUID(data["user_id"])
     s = await user_repo.get_user_settings(db_session, user_id)
     if s is None:
-        await callback.answer("Настройки не найдены.")
+        await callback.answer("Настройки не найдены. Попробуйте /start.")
         return
     await callback.answer()
     usage = await get_image_usage_text(db_session, user_id)
@@ -126,7 +126,7 @@ async def edit_age(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(SettingsEditStates.editing_age)
     await callback.message.edit_text(
-        "Введите ваш возраст (число от 13 до 120).\n\nНажмите «Пропустить» для сброса.",
+        "Введите ваш возраст (число от 13 до 120).\n\nНажмите «Пропустить», чтобы очистить.",
         reply_markup=skip_keyboard(),
     )
 
@@ -147,7 +147,7 @@ async def skip_age(callback: types.CallbackQuery, state: FSMContext, db_session:
 async def save_age(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
     text = (message.text or "").strip()
     if not text.isdigit() or not (13 <= int(text) <= 120):
-        await message.answer("Пожалуйста, введите корректный возраст (число от 13 до 120).")
+        await message.answer("Введите корректный возраст — число от 13 до 120.")
         return
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
@@ -164,7 +164,7 @@ async def edit_city(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(SettingsEditStates.editing_city)
     await callback.message.edit_text(
-        "Введите город.\n\nНажмите «Пропустить» для сброса.",
+        "Введите ваш город.\n\nНажмите «Пропустить», чтобы очистить.",
         reply_markup=skip_keyboard(),
     )
 
@@ -185,7 +185,7 @@ async def skip_city(callback: types.CallbackQuery, state: FSMContext, db_session
 async def save_city(message: types.Message, state: FSMContext, db_session: AsyncSession) -> None:
     text = (message.text or "").strip()
     if len(text) > 100:
-        await message.answer("Слишком длинное название. Максимум 100 символов.")
+        await message.answer("Название слишком длинное — максимум 100 символов.")
         return
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
@@ -236,7 +236,7 @@ async def edit_interests(callback: types.CallbackQuery, state: FSMContext) -> No
     await state.set_state(SettingsEditStates.editing_interests)
     await callback.message.edit_text(
         "Расскажите о своих интересах и хобби (до 500 символов).\n\n"
-        "Нажмите «Пропустить» для сброса.",
+        "Нажмите «Пропустить», чтобы очистить.",
         reply_markup=skip_keyboard(),
     )
 
@@ -258,8 +258,8 @@ async def save_interests(message: types.Message, state: FSMContext, db_session: 
     text = (message.text or "").strip()
     if len(text) > INTERESTS_CHAR_LIMIT:
         await message.answer(
-            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} символов). "
-            "Пожалуйста, сократите."
+            f"Текст слишком длинный ({len(text)}/{INTERESTS_CHAR_LIMIT} симв.). "
+            "Попробуйте сократить."
         )
         return
     data = await state.get_data()
@@ -338,8 +338,8 @@ async def save_identity_text(message: types.Message, state: FSMContext, db_sessi
     text = message.text or ""
     if len(text) > CHAR_LIMIT:
         await message.answer(
-            f"Текст слишком длинный ({len(text)}/{CHAR_LIMIT} символов). "
-            "Пожалуйста, сократите."
+            f"Текст слишком длинный ({len(text)}/{CHAR_LIMIT} симв.). "
+            "Попробуйте сократить."
         )
         return
     data = await state.get_data()

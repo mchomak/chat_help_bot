@@ -29,19 +29,19 @@ async def on_consent_agree(
     await give_consent(db_session, user_id)
     await db_session.commit()
 
-    await callback.answer("Спасибо! Согласие принято.")
+    await callback.answer("Согласие принято ✓")
 
     # Check if user is new (needs onboarding) or returning
     settings = await user_repo.get_user_settings(db_session, user_id)
     if settings and settings.onboarding_completed:
         from app.bot.handlers.common import send_menu
 
-        await callback.message.edit_text("Согласие принято. Добро пожаловать!")
-        await callback.message.answer("Выберите функцию:", reply_markup=PERSISTENT_MENU)
+        await callback.message.edit_text("Всё готово — добро пожаловать! 🎉")
+        await callback.message.answer("Выберите, что хотите сделать:", reply_markup=PERSISTENT_MENU)
         await send_menu(callback.message)
         await state.set_state(None)
     else:
-        await callback.message.edit_text("Согласие принято. Давайте настроим бот под вас.")
+        await callback.message.edit_text("Отлично! Давайте коротко настроим бот под вас.")
         await start_onboarding(callback.message, state)
 
 
@@ -52,6 +52,6 @@ async def on_consent_decline(
     await callback.answer()
     await state.set_state(None)
     await callback.message.edit_text(
-        "Без согласия на обработку данных бот не может работать.\n\n"
-        "Если передумаете, отправьте /start."
+        "Понял, без проблем. Бот работает только с вашего согласия.\n\n"
+        "Если передумаете — просто отправьте /start."
     )

@@ -24,11 +24,11 @@ router = Router(name="modifier")
 logger = logging.getLogger(__name__)
 
 RESULT_HEADERS = {
-    "first_message": "Варианты первого сообщения:",
-    "analyzer": "Варианты ответа:",
-    "anti_ignor": "Варианты для возобновления диалога:",
-    "photo_pickup": "Варианты подкатов:",
-    "flirt": "Варианты флирта:",
+    "first_message": "✉️ Варианты первого сообщения:",
+    "analyzer": "💬 Варианты ответа:",
+    "anti_ignor": "🔄 Варианты для возобновления диалога:",
+    "photo_pickup": "📸 Варианты подкатов:",
+    "flirt": "💬 Варианты флирта:",
 }
 
 
@@ -38,7 +38,7 @@ async def on_change_style(callback: types.CallbackQuery, state: FSMContext) -> N
     scenario = callback.data.split(":")[-1]
     await callback.answer()
     await callback.message.edit_text(
-        "Выберите новый стиль:",
+        "Выберите другой стиль — и я перегенерирую:",
         reply_markup=post_generation_style_keyboard(scenario),
     )
 
@@ -70,7 +70,7 @@ async def on_restyle(
     if not input_text and not image_file_id:
         await callback.answer("Данные предыдущего запроса не найдены.")
         await callback.message.edit_text(
-            "Контекст предыдущей генерации не найден. Начните заново через меню.",
+            "Контекст предыдущего запроса не сохранился. Начните заново через меню.",
             reply_markup=back_to_menu_keyboard(),
         )
         return
@@ -96,7 +96,7 @@ async def on_restyle(
         image_file_id=image_file_id,
         image_mime_type="image/jpeg" if image_file_id else None,
         extra_context=extra_context,
-        processing_text="Генерирую в новом стиле...",
+        processing_text="🎨 Генерирую в новом стиле...",
         result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
     )
 
@@ -123,7 +123,7 @@ async def on_more_variants(
     if not input_text and not image_file_id:
         await callback.answer("Данные предыдущего запроса не найдены.")
         await callback.message.edit_text(
-            "Контекст предыдущей генерации не найден. Начните заново через меню.",
+            "Контекст предыдущего запроса не сохранился. Начните заново через меню.",
             reply_markup=back_to_menu_keyboard(),
         )
         return
@@ -148,23 +148,23 @@ async def on_more_variants(
         image_file_id=image_file_id,
         image_mime_type="image/jpeg" if image_file_id else None,
         extra_context=extra_context,
-        processing_text="Генерирую новые варианты...",
+        processing_text="✨ Генерирую ещё варианты...",
         result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
     )
 
 
 # Mapping of scenario targets to their waiting-input prompts and states
 _SCENARIO_INPUT_PROMPTS = {
-    "first_message": "Отправьте скриншот профиля или описание текстом.",
-    "analyzer": "Отправьте скриншот переписки или переписку текстом.",
+    "first_message": "Отправьте скриншот профиля или опишите человека текстом.",
+    "analyzer": "Отправьте скриншот переписки или вставьте текст диалога.",
     "anti_ignor": "Отправьте текст или скриншот последнего сообщения.",
-    "photo_pickup": "Отправьте фото.",
-    "flirt": "Отправьте скриншот переписки, фото или описание текстом.",
+    "photo_pickup": "Отправьте фото человека, которому хотите написать.",
+    "flirt": "Отправьте скриншот переписки, фото или опишите ситуацию текстом.",
     "reply_message": (
         "Отправьте скриншот переписки или текст в формате:\n"
         "Я: ...\nОна: ...\nЯ: ...\nОна: ..."
     ),
-    "profile_review": "Отправьте описание своего профиля и при желании добавьте скриншот.",
+    "profile_review": "Опишите свой профиль текстом — или добавьте скриншот.",
 }
 
 # Scenario -> menu callback for restart
@@ -309,7 +309,7 @@ async def on_retry(
     if not scenario:
         await callback.answer("Нет данных для повтора.")
         await callback.message.edit_text(
-            "Данные предыдущего запроса не найдены.",
+            "Не удалось найти данные предыдущего запроса. Начните заново через меню.",
             reply_markup=back_to_menu_keyboard(),
         )
         return
@@ -322,7 +322,7 @@ async def on_retry(
     style = data.get("retry_style") or data.get("gen_style")
     extra_context = data.get("retry_extra_context") or data.get("gen_extra_context")
 
-    await callback.answer("Повторяю запрос...")
+    await callback.answer("Повторяю...")
 
     image_b64 = None
     if image_file_id:
@@ -342,6 +342,6 @@ async def on_retry(
         image_file_id=image_file_id,
         image_mime_type="image/jpeg" if image_file_id else None,
         extra_context=extra_context,
-        processing_text="Повторяю запрос...",
+        processing_text="🔄 Повторяю запрос...",
         result_header=RESULT_HEADERS.get(scenario, "Варианты:"),
     )

@@ -38,7 +38,7 @@ async def start_photo_pickup(
 
     # Always show style selection
     await callback.message.edit_text(
-        "Выберите стиль ответа:",
+        "Выберите стиль подката:",
         reply_markup=style_keyboard("ppstyle"),
     )
     await state.set_state(PhotoPickupStates.choosing_style)
@@ -57,7 +57,7 @@ async def on_style_chosen(
     usage = await get_image_usage_text(db_session, user_id)
 
     await callback.message.edit_text(
-        f"Отправьте фото.\n\n📊 {usage}",
+        f"Отправьте фото человека, которому хотите написать.\n\n📊 {usage}",
         reply_markup=waiting_input_keyboard("menu"),
     )
     await state.set_state(PhotoPickupStates.waiting_photo)
@@ -90,11 +90,11 @@ async def on_photo(
         image_file_id=photo.file_id,
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
-        processing_text="Анализирую фото...",
-        result_header="Варианты подкатов:",
+        processing_text="🔍 Анализирую фото...",
+        result_header="📸 Варианты подкатов:",
     )
 
 
 @router.message(PhotoPickupStates.waiting_photo)
 async def on_not_photo(message: types.Message) -> None:
-    await message.answer("Пожалуйста, отправьте фото.")
+    await message.answer("Пожалуйста, отправьте именно фото — текст здесь не принимается.")

@@ -17,10 +17,10 @@ from app.services.payment_service import confirm_stub_payment, create_stub_payme
 router = Router(name="payment")
 
 ACCESS_LABELS = {
-    "none": "Нет доступа (пробный период еще не использован)",
-    "trial": "Пробный период активен",
-    "expired": "Пробный период закончился",
-    "paid": "Оплачен",
+    "none": "⬜ Пробный период ещё не активирован",
+    "trial": "⏳ Пробный период активен",
+    "expired": "⌛ Пробный период истёк",
+    "paid": "✅ Подписка активна",
 }
 
 
@@ -45,7 +45,7 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
                 lines.append(f"Осталось: {minutes} мин.")
 
     if status in (AccessStatus.EXPIRED, AccessStatus.NONE):
-        lines.append("\nДля продолжения использования оформите подписку.")
+        lines.append("\nЧтобы продолжить — оформите подписку.")
         lines.append("Стоимость: 299 ₽ / месяц")
 
     text = "\n".join(lines)
@@ -63,9 +63,9 @@ async def create_payment(callback: types.CallbackQuery, state: FSMContext, db_se
 
     await callback.answer()
     await callback.message.edit_text(
-        f"Создана заявка на оплату.\nID: {tx_id}\n\n"
-        "В реальной версии здесь будет ссылка на оплату.\n"
-        "Для тестирования нажмите кнопку ниже.",
+        f"Заявка на оплату создана.\nID: {tx_id}\n\n"
+        "В рабочей версии здесь будет ссылка для оплаты.\n"
+        "Для тестирования нажмите кнопку подтверждения ниже.",
         reply_markup=payment_confirm_keyboard(str(tx_id)),
     )
 
@@ -86,15 +86,15 @@ async def confirm_payment(callback: types.CallbackQuery, state: FSMContext, db_s
     await db_session.commit()
 
     if success:
-        await callback.answer("Оплата подтверждена!")
+        await callback.answer("Оплата подтверждена ✓")
         await callback.message.edit_text(
-            "Оплата подтверждена! Доступ активирован на 30 дней.",
+            "✅ Оплата прошла успешно! Доступ активирован на 30 дней.",
             reply_markup=back_to_menu_keyboard(),
         )
     else:
-        await callback.answer("Транзакция уже обработана или не найдена.")
+        await callback.answer("Транзакция не найдена или уже обработана.")
         await callback.message.edit_text(
-            "Транзакция уже обработана или не найдена.",
+            "Транзакция не найдена или уже была обработана ранее.",
             reply_markup=back_to_menu_keyboard(),
         )
 

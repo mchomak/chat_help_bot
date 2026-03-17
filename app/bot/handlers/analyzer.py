@@ -21,7 +21,7 @@ from app.services.image_service import download_telegram_photo, photo_bytes_to_b
 router = Router(name="analyzer")
 logger = logging.getLogger(__name__)
 
-INPUT_PROMPT = "Отправьте скриншот переписки или переписку текстом."
+INPUT_PROMPT = "Отправьте скриншот переписки или вставьте текст диалога."
 
 
 @router.callback_query(F.data == "menu:analyzer")
@@ -40,7 +40,7 @@ async def start_analyzer(
 
     # Always show style selection for analyzer
     await callback.message.edit_text(
-        "Выберите стиль ответа:",
+        "Выберите стиль ответов:",
         reply_markup=style_keyboard("azstyle"),
     )
     await state.set_state(AnalyzerStates.choosing_style)
@@ -93,8 +93,8 @@ async def on_analyzer_photo(
         image_file_id=photo.file_id,
         image_mime_type="image/jpeg",
         image_size=photo.file_size,
-        processing_text="Анализирую переписку...",
-        result_header="Варианты ответа:",
+        processing_text="🔍 Анализирую переписку...",
+        result_header="💬 Варианты ответа:",
     )
 
 
@@ -116,8 +116,8 @@ async def on_analyzer_text(
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     if len(lines) < 2:
         await message.answer(
-            "Переписка слишком короткая для анализа.\n"
-            "Попробуйте «Генератор первых сообщений».",
+            "Переписка слишком короткая для анализа.\n\n"
+            "Если вы только начинаете — попробуйте «Генератор первых сообщений».",
             reply_markup=suggest_first_message_keyboard(),
         )
         await state.set_state(None)
@@ -129,6 +129,6 @@ async def on_analyzer_text(
         scenario="analyzer",
         style=style,
         input_text=text,
-        processing_text="Анализирую переписку...",
-        result_header="Варианты ответа:",
+        processing_text="🔍 Анализирую переписку...",
+        result_header="💬 Варианты ответа:",
     )
