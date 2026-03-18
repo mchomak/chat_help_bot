@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 
 from aiogram import F, Router, types
@@ -15,6 +16,7 @@ from app.services.access_service import AccessStatus, check_access
 from app.services.payment_service import confirm_stub_payment, create_stub_payment
 
 router = Router(name="payment")
+logger = logging.getLogger(__name__)
 
 ACCESS_LABELS = {
     "none": "⬜ Пробный период ещё не активирован",
@@ -82,15 +84,31 @@ async def confirm_payment(callback: types.CallbackQuery, state: FSMContext, db_s
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    success = await confirm_stub_payment(db_session, tx_id, user_id)
+    result = await confirm_stub_payment(db_session, tx_id, user_id)
     await db_session.commit()
 
-    if success:
+    if result.success:
         await callback.answer("Оплата подтверждена ✓")
         await callback.message.edit_text(
             "✅ Оплата прошла успешно! Доступ активирован на 30 дней.",
             reply_markup=back_to_menu_keyboard(),
         )
+
+        # Notify referrer about the bonus
+        if result.referrer_telegram_id is not None:
+            try:
+                await callback.bot.send_message(
+                    chat_id=result.referrer_telegram_id,
+                    text=(
+                        f"🎉 По вашей реферальной ссылке кто-то оформил подписку!\n"
+                        f"Вам начислено +{result.referral_bonus_days} дней бесплатного доступа."
+                    ),
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to send referral bonus notification to telegram_id=%s",
+                    result.referrer_telegram_id,
+                )
     else:
         await callback.answer("Транзакция не найдена или уже обработана.")
         await callback.message.edit_text(

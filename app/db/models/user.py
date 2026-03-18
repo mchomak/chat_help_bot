@@ -19,6 +19,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Telegram ID of the user who invited this user (set once at registration)
+    referred_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -73,3 +75,5 @@ class UserAccess(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True,
     )
     last_successful_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Set to True once the referral bonus has been credited to the referrer for this user's payment
+    referral_bonus_granted: Mapped[bool] = mapped_column(default=False, nullable=False)

@@ -6,7 +6,7 @@ import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.user import User, UserAccess, UserConsent, UserSettings
@@ -38,10 +38,31 @@ async def get_or_create_user(
     return user, True
 
 
+async def get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     stmt = select(User).where(User.telegram_id == telegram_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def count_paid_referrals(session: AsyncSession, referrer_telegram_id: int) -> int:
+    """Count users referred by referrer_telegram_id who have triggered the bonus."""
+    stmt = (
+        select(func.count())
+        .select_from(User)
+        .join(UserAccess, UserAccess.user_id == User.id)
+        .where(
+            User.referred_by_telegram_id == referrer_telegram_id,
+            UserAccess.referral_bonus_granted.is_(True),
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one() or 0
 
 
 async def update_user_fields(

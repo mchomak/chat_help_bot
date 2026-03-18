@@ -351,6 +351,45 @@ async def save_identity_text(message: types.Message, state: FSMContext, db_sessi
     await message.answer(_format_settings(s), reply_markup=settings_menu_keyboard())
 
 
+# --- Referral system ---
+@router.callback_query(F.data == "set:referral")
+async def show_referral(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+
+    user = await user_repo.get_user_by_id(db_session, user_id)
+    if user is None:
+        await callback.answer("Пользователь не найден.")
+        return
+
+    await callback.answer()
+
+    # Build personal referral link
+    bot_info = await callback.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user.telegram_id}"
+
+    from app.config import settings as app_settings
+    reward_days = app_settings.referral_reward_days
+
+    # Count users referred by this person who have made a payment
+    paid_referrals = await user_repo.count_paid_referrals(db_session, user.telegram_id)
+
+    text = (
+        "🔗 Реферальная система\n\n"
+        f"Приглашайте друзей — за каждого, кто оформит подписку, "
+        f"вы получите +{reward_days} дней бесплатного доступа.\n\n"
+        f"Ваша реферальная ссылка:\n{ref_link}\n\n"
+        f"Приглашено и оплатили: {paid_referrals} чел."
+    )
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Назад к настройкам", callback_data="menu:settings")],
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+
 # --- Reset all ---
 @router.callback_query(F.data == "set:reset_all")
 async def reset_all(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
