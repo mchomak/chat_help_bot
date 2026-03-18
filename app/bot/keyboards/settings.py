@@ -14,6 +14,7 @@ def settings_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Ситуация", callback_data="set:edit:situation")],
             [InlineKeyboardButton(text="Роль", callback_data="set:edit:role")],
             [InlineKeyboardButton(text="О себе", callback_data="set:edit:identity")],
+            [InlineKeyboardButton(text="🔗 Реферальная система", callback_data="set:referral")],
             [InlineKeyboardButton(text="Сбросить все", callback_data="set:reset_all")],
             [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
         ],
