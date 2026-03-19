@@ -22,7 +22,7 @@ class AccessStatus:
 async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     """Return current access status string for the user.
 
-    Performs expiration check and updates status if needed.
+    Performs expiration check and updates status + screenshots_balance if needed.
     """
     stmt = select(UserAccess).where(UserAccess.user_id == user_id)
     result = await session.execute(stmt)
@@ -33,7 +33,6 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     now = datetime.datetime.now(datetime.UTC)
 
     def _is_expired(dt: datetime.datetime) -> bool:
-        """Compare datetimes safely regardless of timezone awareness."""
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.UTC)
         return dt < now
@@ -41,6 +40,7 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     if access.access_status == AccessStatus.PAID:
         if access.paid_until and _is_expired(access.paid_until):
             access.access_status = AccessStatus.EXPIRED
+            access.screenshots_balance = 0  # unused screenshots burn on expiry
             await session.flush()
             return AccessStatus.EXPIRED
         return AccessStatus.PAID
@@ -48,6 +48,7 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     if access.access_status == AccessStatus.TRIAL:
         if access.trial_expires_at and _is_expired(access.trial_expires_at):
             access.access_status = AccessStatus.EXPIRED
+            access.screenshots_balance = 0  # trial screenshots burn on expiry
             await session.flush()
             return AccessStatus.EXPIRED
         return AccessStatus.TRIAL
@@ -61,12 +62,11 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | None:
     """Atomically activate trial for user. Returns None if trial was already used.
 
-    Uses UPDATE ... WHERE to prevent race conditions.
+    Sets screenshots_balance to the configured trial limit.
     """
     now = datetime.datetime.now(datetime.UTC)
     expires = now + datetime.timedelta(hours=settings.trial.duration_hours)
 
-    # SELECT FOR UPDATE pattern: fetch, check, then update
     stmt = select(UserAccess).where(
         UserAccess.user_id == user_id,
         UserAccess.trial_used.is_(False),
@@ -80,6 +80,7 @@ async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAcces
     access.trial_started_at = now
     access.trial_expires_at = expires
     access.access_status = AccessStatus.TRIAL
+    access.screenshots_balance = settings.monthly_image_limit
     await session.flush()
     return access
 
@@ -89,8 +90,12 @@ async def grant_paid_access(
     user_id: uuid.UUID,
     paid_until: datetime.datetime,
     payment_id: uuid.UUID,
+    base_screenshots: int = 0,
 ) -> None:
-    """Grant paid access to user after successful transaction."""
+    """Grant paid access to user after successful transaction.
+
+    Resets screenshots_balance to base_screenshots (unused old screenshots burn).
+    """
     stmt = (
         update(UserAccess)
         .where(UserAccess.user_id == user_id)
@@ -98,7 +103,37 @@ async def grant_paid_access(
             access_status=AccessStatus.PAID,
             paid_until=paid_until,
             last_successful_payment_id=str(payment_id),
+            screenshots_balance=base_screenshots,
         )
+    )
+    await session.execute(stmt)
+    await session.flush()
+
+
+async def add_screenshot_pack(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    screenshots: int,
+) -> None:
+    """Add screenshots to user's balance (screenshot pack purchase)."""
+    stmt = (
+        update(UserAccess)
+        .where(UserAccess.user_id == user_id)
+        .values(screenshots_balance=UserAccess.screenshots_balance + screenshots)
+    )
+    await session.execute(stmt)
+    await session.flush()
+
+
+async def decrement_screenshot_balance(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+) -> None:
+    """Decrement screenshots_balance by 1 (clamped at 0). Called after a successful image generation."""
+    stmt = (
+        update(UserAccess)
+        .where(UserAccess.user_id == user_id, UserAccess.screenshots_balance > 0)
+        .values(screenshots_balance=UserAccess.screenshots_balance - 1)
     )
     await session.execute(stmt)
     await session.flush()
