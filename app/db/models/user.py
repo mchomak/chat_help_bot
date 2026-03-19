@@ -77,3 +77,5 @@ class UserAccess(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_successful_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # Set to True once the referral bonus has been credited to the referrer for this user's payment
     referral_bonus_granted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Remaining screenshot budget. Resets to tariff base on new purchase, zeroes on expiry.
+    screenshots_balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

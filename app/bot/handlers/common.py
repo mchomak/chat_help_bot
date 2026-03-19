@@ -18,9 +18,8 @@ from app.bot.keyboards.scenarios import (
     post_generation_keyboard_no_restyle,
 )
 from app.bot.states.onboarding import OnboardingStates
-from app.config import settings as app_settings
-from app.db.repositories.ai_repo import count_image_requests_this_month
-from app.services.access_service import AccessStatus, activate_trial, check_access
+from app.db.repositories import user_repo
+from app.services.access_service import AccessStatus, activate_trial, check_access, decrement_screenshot_balance
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ async def ensure_access(
         return True
 
     if status == AccessStatus.NONE:
-        # Activate trial
+        # Activate trial — sets screenshots_balance to monthly_image_limit
         access = await activate_trial(session, user_id)
         if access is not None:
             await session.commit()
@@ -84,25 +83,20 @@ async def ensure_access(
     return False
 
 
-LIMIT_EXCEEDED_TEXT = (
-    "📊 Лимит скриншотов на этот месяц исчерпан ({limit} шт.).\n\n"
-    "Для продолжения можно докупить дополнительный пакет на 100 скринов.\n"
-    "Перейдите в раздел «Подписка»."
-)
-
-
 async def ensure_image_limit(
     event: types.Message | types.CallbackQuery,
     session: AsyncSession,
     user_id: uuid.UUID,
 ) -> bool:
-    """Check monthly image processing limit. Returns True if within limit."""
-    limit = app_settings.monthly_image_limit
-    used = await count_image_requests_this_month(session, user_id)
-    if used < limit:
+    """Check screenshot balance. Returns True if user has screenshots remaining."""
+    access = await user_repo.get_access(session, user_id)
+    if access is not None and access.screenshots_balance > 0:
         return True
 
-    text = LIMIT_EXCEEDED_TEXT.format(limit=limit)
+    text = (
+        "📊 Скриншоты закончились.\n\n"
+        "Докупите дополнительный пакет в разделе «Подписка»."
+    )
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, reply_markup=payment_menu_keyboard())
     else:
@@ -114,11 +108,10 @@ async def get_image_usage_text(
     session: AsyncSession,
     user_id: uuid.UUID,
 ) -> str:
-    """Return human-readable image usage string like 'Осталось 205/300 скриншотов в этом месяце'."""
-    limit = app_settings.monthly_image_limit
-    used = await count_image_requests_this_month(session, user_id)
-    remaining = max(0, limit - used)
-    return f"Скриншоты: осталось {remaining} из {limit} в этом месяце"
+    """Return human-readable screenshot balance string."""
+    access = await user_repo.get_access(session, user_id)
+    balance = access.screenshots_balance if access else 0
+    return f"Скриншоты: осталось {balance} шт."
 
 
 def settings_kwargs(settings) -> dict:
@@ -154,7 +147,6 @@ async def generate_and_send(
 
     Saves generation context in FSM state for re-generation.
     """
-    from app.db.repositories import user_repo
     from app.services import ai_service
 
     logger.info(
@@ -162,7 +154,7 @@ async def generate_and_send(
         scenario, style, bool(input_text), image_base64 is not None, user_id,
     )
 
-    # Check image limit before processing
+    # Check screenshot balance before processing an image
     if image_base64 is not None:
         if not await ensure_image_limit(event, db_session, user_id):
             await state.set_state(None)
@@ -190,6 +182,10 @@ async def generate_and_send(
             extra_context=extra_context,
             **skw,
         )
+
+        # Decrement screenshot balance after a successful AI call with image
+        if image_base64 is not None:
+            await decrement_screenshot_balance(db_session, user_id)
 
         items = result.get("items", [])
         analysis = result.get("analysis", [])
