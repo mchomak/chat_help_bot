@@ -88,7 +88,7 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
 async def select_tariff(callback: types.CallbackQuery) -> None:
     await callback.answer()
     await callback.message.edit_text(
-        """Выберите тариф подписки:\n
+        """Выберите тариф подписки:
 
         Подписка открывает полный доступ ко всем функциям бота на выбранный срок.
         В каждый тариф уже включён базовый лимит скриншотов для анализа переписок и фото. Чем дольше тариф, тем выгоднее стоимость доступа.
