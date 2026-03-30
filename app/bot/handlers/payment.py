@@ -9,7 +9,7 @@ import uuid
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from aiogram.enums import ParseMode
 from app.bot.keyboards.payment import (
     pack_selection_keyboard,
     payment_confirm_keyboard,
@@ -83,24 +83,25 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
 
 
 # ── Tariff selection ────────────────────────────────────────────────────────
-
 @router.callback_query(F.data == "pay:select_tariff")
 async def select_tariff(callback: types.CallbackQuery) -> None:
     await callback.answer()
+
+    text = (
+        "<b>Выберите тариф подписки:</b>\n\n"
+        "Подписка даёт <b>полный доступ</b> ко всем функциям бота на выбранный срок.\n\n"
+        "<b>Что входит в подписку:</b>\n\n"
+        "• Полный доступ ко всем функциям\n\n"
+        "• <b>Неограниченное количество текстовых запросов</b>\n\n"
+        "• Базовый лимит скриншотов для анализа переписок и фото\n\n"
+        "• Возможность докупить дополнительные скриншоты\n\n"
+        "Оставшееся количество скриншотов можно посмотреть в разделе <b>«Подписка»</b>.\n\n"
+        "Неиспользованные скриншоты <b>сгорают</b> после окончания периода."
+    )
+
     await callback.message.edit_text(
-        """Выберите тариф подписки:
-
-        Подписка открывает полный доступ ко всем функциям бота на выбранный срок.
-        В каждый тариф уже включён базовый лимит скриншотов для анализа переписок и фото. Чем дольше тариф, тем выгоднее стоимость доступа.
-        Что входит в подписку:
-
-        • полный доступ ко всем функциям бота
-        • доступ на выбранный период
-        • лимит скриншотов для анализа
-        • возможность докупить дополнительные скриншоты
-
-        Оставшееся количество скриншотов можно посмотреть в разделе «Подписка».
-        Неиспользованные скриншоты сгорают после окончания оплаченного периода.""",
+        text,
+        parse_mode=ParseMode.HTML,
         reply_markup=tariff_selection_keyboard(),
     )
 
