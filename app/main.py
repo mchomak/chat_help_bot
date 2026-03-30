@@ -21,6 +21,32 @@ logging.basicConfig(
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 
+
+class _TLSProbeFilter(logging.Filter):
+    """Drop log records caused by TLS/HTTPS connections hitting the plain-HTTP port.
+
+    Symptom: internet scanners or misconfigured clients send TLS ClientHello bytes
+    (b'\\x16\\x03\\x01...') directly to our HTTP port, producing aiohttp errors like:
+      BadHttpMethod: 400, message: Invalid method encountered: b'\\x16\\x03\\x01\\x02'
+
+    Root fix: ensure the port is only bound to 127.0.0.1 in docker-compose so it's
+    never reachable from the internet without going through the reverse proxy (nginx).
+    This filter handles any residual noise (e.g. local-network probes).
+    """
+
+    _SKIP_PHRASES = (
+        "Invalid method encountered",   # TLS ClientHello on HTTP port
+        "BadStatusLine",                # Other malformed HTTP from scanners
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(phrase in msg for phrase in self._SKIP_PHRASES)
+
+
+# Apply filter to aiohttp's low-level server logger (raises WARNING for bad requests)
+logging.getLogger("aiohttp.server").addFilter(_TLSProbeFilter())
+
 logger = logging.getLogger(__name__)
 
 
