@@ -53,20 +53,24 @@ async def cmd_start(message: types.Message, state: FSMContext, db_session: Async
         )
 
     # Parse referral parameter from deep link: /start ref_<telegram_id>
+    #
+    # NOTE: EnsureUserMiddleware runs before this handler and already called
+    # get_or_create_user(), so `created` is always False here for new users.
+    # We must NOT guard on `created` — instead check referred_by_telegram_id is None.
     start_param = ""
     if message.text:
         parts = message.text.strip().split(maxsplit=1)
         if len(parts) == 2:
             start_param = parts[1]
 
-    if created and start_param.startswith("ref_"):
+    if start_param.startswith("ref_") and user.referred_by_telegram_id is None:
         ref_telegram_id_str = start_param[4:]
         if ref_telegram_id_str.isdigit():
             ref_telegram_id = int(ref_telegram_id_str)
             # Don't let users refer themselves
             if ref_telegram_id != message.from_user.id:
                 referrer = await user_repo.get_user_by_telegram_id(db_session, ref_telegram_id)
-                if referrer is not None and user.referred_by_telegram_id is None:
+                if referrer is not None:
                     user.referred_by_telegram_id = ref_telegram_id
                     logger.info(
                         "User %s referred by telegram_id=%s",
