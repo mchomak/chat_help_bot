@@ -211,7 +211,21 @@ async def _grant_goods(session: AsyncSession, payment: Payment) -> GrantResult:
 
     if payment.purchase_type == "tariff":
         plan = tariffs_config.get_tariff(payment.purchase_key)
-        paid_until = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=plan.days)
+        now = datetime.datetime.now(datetime.UTC)
+
+        # Extend from current paid_until if subscription is still active; otherwise start from now
+        access = (
+            await session.execute(select(UserAccess).where(UserAccess.user_id == user_id))
+        ).scalar_one_or_none()
+        if access and access.paid_until:
+            current_until = access.paid_until
+            if current_until.tzinfo is None:
+                current_until = current_until.replace(tzinfo=datetime.UTC)
+            base = current_until if current_until > now else now
+        else:
+            base = now
+
+        paid_until = base + datetime.timedelta(days=plan.days)
         await grant_paid_access(
             session, user_id, paid_until, payment.id,
             base_screenshots=plan.base_screenshots,
@@ -230,14 +244,13 @@ async def _maybe_grant_referral_bonus(
     payer_user_id: uuid.UUID,
     payment_id: uuid.UUID,
 ) -> dict:
+    """Grant bonus days to the referrer on every successful tariff payment by the referred user.
+
+    Idempotency is ensured at the payment level via Payment.goods_granted — this function
+    is only ever called once per payment.
+    """
     payer = await user_repo.get_user_by_id(session, payer_user_id)
     if payer is None or payer.referred_by_telegram_id is None:
-        return {"referrer_telegram_id": None, "referral_bonus_days": 0, "referral_bonus_screenshots": 0}
-
-    payer_access = (
-        await session.execute(select(UserAccess).where(UserAccess.user_id == payer_user_id))
-    ).scalar_one_or_none()
-    if payer_access is None or payer_access.referral_bonus_granted:
         return {"referrer_telegram_id": None, "referral_bonus_days": 0, "referral_bonus_screenshots": 0}
 
     referrer = await user_repo.get_user_by_telegram_id(session, payer.referred_by_telegram_id)
@@ -254,16 +267,21 @@ async def _maybe_grant_referral_bonus(
     bonus_screenshots = app_settings.referral_reward_screenshots
     now = datetime.datetime.now(datetime.UTC)
 
+    # Extend from current paid_until if referrer's subscription is still active; else from now
     base = referrer_access.paid_until
-    if base is None or (getattr(base, "tzinfo", None) is None and base < now) or base < now:
+    if base is not None:
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=datetime.UTC)
+        if base <= now:
+            base = now
+    else:
         base = now
+
     new_paid_until = base + datetime.timedelta(days=bonus_days)
     await grant_paid_access(
         session, referrer.id, new_paid_until, payment_id,
         base_screenshots=referrer_access.screenshots_balance + bonus_screenshots,
     )
-
-    payer_access.referral_bonus_granted = True
     await session.flush()
 
     return {
