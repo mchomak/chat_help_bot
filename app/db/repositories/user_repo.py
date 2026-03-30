@@ -6,7 +6,7 @@ import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.user import User, UserAccess, UserConsent, UserSettings
@@ -120,3 +120,9 @@ async def get_access(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | 
     stmt = select(UserAccess).where(UserAccess.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def update_user_email(session: AsyncSession, user_id: uuid.UUID, email: str) -> None:
+    stmt = update(User).where(User.id == user_id).values(email=email)
+    await session.execute(stmt)
+    await session.flush()

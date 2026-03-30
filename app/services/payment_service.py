@@ -44,6 +44,7 @@ async def create_and_initiate_payment(
     user_id: uuid.UUID,
     purchase_type: str,
     purchase_key: str,
+    customer_email: str,
 ) -> InitiateResult:
     """Create a DB Payment record then call YooKassa to get a payment URL.
 
@@ -72,6 +73,16 @@ async def create_and_initiate_payment(
     # Commit so the record survives even if the API call below crashes the process
     await session.commit()
 
+    logger.info(
+        "Initiating payment: user_id=%s type=%s key=%s amount=%.2f email=%s payment_db_id=%s",
+        user_id,
+        purchase_type,
+        purchase_key,
+        amount,
+        customer_email[:3] + "***" if len(customer_email) > 3 else "***",
+        payment.id,
+    )
+
     try:
         result = await yookassa_service.create_payment(
             shop_id=app_settings.yookassa.shop_id,
@@ -81,6 +92,8 @@ async def create_and_initiate_payment(
             return_url=app_settings.yookassa.return_url,
             idempotency_key=str(payment.id),
             metadata={"payment_db_id": str(payment.id), "user_id": str(user_id)},
+            customer_email=customer_email,
+            vat_code=app_settings.yookassa.vat_code,
         )
         payment.yookassa_payment_id = result.yookassa_id
         payment.payment_url = result.confirmation_url
