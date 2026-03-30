@@ -19,6 +19,7 @@ from app.bot.keyboards.payment import (
     tariff_selection_keyboard,
 )
 from app.bot.keyboards.scenarios import back_to_menu_keyboard
+from app.bot.states.scenarios import PaymentStates
 from app.db.repositories import payment_repo, user_repo
 from app.db.models.payment import PaymentStatus
 from app.services.access_service import AccessStatus, check_access
@@ -98,34 +99,31 @@ async def create_tariff_payment(
 ) -> None:
     tariff_key = callback.data.split(":")[-1]
     try:
-        plan = tariffs_config.get_tariff(tariff_key)
+        tariffs_config.get_tariff(tariff_key)
     except KeyError:
         await callback.answer("Неверный тариф.")
         return
 
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
-
     await callback.answer()
-    await callback.message.edit_text("⏳ Создаём счёт на оплату...")
 
-    result = await create_and_initiate_payment(
-        db_session, user_id=user_id, purchase_type="tariff", purchase_key=tariff_key,
-    )
-
-    if result.payment_url:
-        await callback.message.edit_text(
-            f"Тариф: {plan.label}\n"
-            f"Сумма: {int(plan.price)} ₽\n"
-            f"Срок: {plan.days} дн. · Скриншоты: {plan.base_screenshots} шт.\n\n"
-            "Нажмите кнопку для перехода к оплате. "
-            "После оплаты вернитесь и нажмите «Проверить статус».",
-            reply_markup=payment_pending_keyboard(result.payment_url, str(result.payment_id)),
+    user = await user_repo.get_user_by_id(db_session, user_id)
+    if user and user.email:
+        await callback.message.edit_text("⏳ Создаём счёт на оплату...")
+        await _do_create_payment(
+            callback.message, db_session, user_id, "tariff", tariff_key, user.email,
         )
     else:
+        await state.update_data(
+            pending_purchase_type="tariff",
+            pending_purchase_key=tariff_key,
+        )
+        await state.set_state(PaymentStates.waiting_email)
         await callback.message.edit_text(
-            "⚠️ Не удалось создать счёт на оплату. Попробуйте позже.",
-            reply_markup=payment_error_keyboard(),
+            "📧 Для получения чека введите ваш e-mail:\n\n"
+            "(Он нужен только для отправки фискального чека от YooKassa. "
+            "Введите один раз — в следующий раз спрашивать не будем.)",
         )
 
 
@@ -156,34 +154,119 @@ async def create_pack_payment(
 ) -> None:
     pack_key = callback.data.split(":")[-1]
     try:
-        pack = tariffs_config.get_pack(pack_key)
+        tariffs_config.get_pack(pack_key)
     except KeyError:
         await callback.answer("Неверный пакет.")
         return
 
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
-
     await callback.answer()
-    await callback.message.edit_text("⏳ Создаём счёт на оплату...")
 
+    user = await user_repo.get_user_by_id(db_session, user_id)
+    if user and user.email:
+        await callback.message.edit_text("⏳ Создаём счёт на оплату...")
+        await _do_create_payment(
+            callback.message, db_session, user_id, "pack", pack_key, user.email,
+        )
+    else:
+        await state.update_data(
+            pending_purchase_type="pack",
+            pending_purchase_key=pack_key,
+        )
+        await state.set_state(PaymentStates.waiting_email)
+        await callback.message.edit_text(
+            "📧 Для получения чека введите ваш e-mail:\n\n"
+            "(Он нужен только для отправки фискального чека от YooKassa. "
+            "Введите один раз — в следующий раз спрашивать не будем.)",
+        )
+
+
+# ── Email collection for receipt ────────────────────────────────────────────
+
+@router.message(PaymentStates.waiting_email)
+async def receive_email_for_payment(
+    message: types.Message, state: FSMContext, db_session: AsyncSession,
+) -> None:
+    email = (message.text or "").strip().lower()
+    if not _is_valid_email(email):
+        await message.answer(
+            "❌ Некорректный e-mail. Пожалуйста, введите действующий адрес (например, user@example.com)."
+        )
+        return
+
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+    purchase_type = data.get("pending_purchase_type")
+    purchase_key = data.get("pending_purchase_key")
+
+    # Save email to DB for future payments
+    await user_repo.update_user_email(db_session, user_id, email)
+    await db_session.commit()
+
+    await state.set_state(None)
+
+    if not purchase_type or not purchase_key:
+        await message.answer("⚠️ Что-то пошло не так. Пожалуйста, начните оформление заново.")
+        return
+
+    status_msg = await message.answer("⏳ Создаём счёт на оплату...")
+    await _do_create_payment(status_msg, db_session, user_id, purchase_type, purchase_key, email)
+
+
+# ── Shared payment creation helper ──────────────────────────────────────────
+
+async def _do_create_payment(
+    message: types.Message,
+    db_session: AsyncSession,
+    user_id: uuid.UUID,
+    purchase_type: str,
+    purchase_key: str,
+    customer_email: str,
+) -> None:
     result = await create_and_initiate_payment(
-        db_session, user_id=user_id, purchase_type="pack", purchase_key=pack_key,
+        db_session,
+        user_id=user_id,
+        purchase_type=purchase_type,
+        purchase_key=purchase_key,
+        customer_email=customer_email,
     )
 
     if result.payment_url:
-        await callback.message.edit_text(
-            f"Пакет: {pack.label}\n"
-            f"Сумма: {int(pack.price)} ₽\n\n"
-            "Нажмите кнопку для перехода к оплате. "
-            "После оплаты нажмите «Проверить статус».",
+        if purchase_type == "tariff":
+            plan = tariffs_config.get_tariff(purchase_key)
+            text = (
+                f"Тариф: {plan.label}\n"
+                f"Сумма: {int(plan.price)} ₽\n"
+                f"Срок: {plan.days} дн. · Скриншоты: {plan.base_screenshots} шт.\n\n"
+                "Нажмите кнопку для перехода к оплате. "
+                "После оплаты вернитесь и нажмите «Проверить статус»."
+            )
+        else:
+            pack = tariffs_config.get_pack(purchase_key)
+            text = (
+                f"Пакет: {pack.label}\n"
+                f"Сумма: {int(pack.price)} ₽\n\n"
+                "Нажмите кнопку для перехода к оплате. "
+                "После оплаты нажмите «Проверить статус»."
+            )
+        await message.edit_text(
+            text,
             reply_markup=payment_pending_keyboard(result.payment_url, str(result.payment_id)),
         )
     else:
-        await callback.message.edit_text(
+        await message.edit_text(
             "⚠️ Не удалось создать счёт на оплату. Попробуйте позже.",
             reply_markup=payment_error_keyboard(),
         )
+
+
+def _is_valid_email(s: str) -> bool:
+    """Basic email validation — no external dependency required."""
+    if "@" not in s:
+        return False
+    local, _, domain = s.partition("@")
+    return bool(local) and "." in domain and 5 <= len(s) <= 254
 
 
 # ── Poll payment status (user-initiated) ────────────────────────────────────

@@ -41,23 +41,62 @@ async def create_payment(
     return_url: str,
     idempotency_key: str,
     metadata: dict,
+    customer_email: str,
+    vat_code: int = 1,
 ) -> YKPaymentResult:
     """Create a YooKassa payment and return id + redirect URL.
 
     Raises ``RuntimeError`` on API failure (caller should catch and mark api_error).
     """
+    # Truncate description to 128 chars as required by YooKassa receipt items
+    item_description = description[:128]
+    amount_value = f"{amount:.2f}"
+
+    payload = {
+        "amount": {"value": amount_value, "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": return_url},
+        "capture": True,
+        "description": description,
+        "metadata": metadata,
+        "receipt": {
+            "customer": {"email": customer_email},
+            "items": [
+                {
+                    "description": item_description,
+                    "amount": {"value": amount_value, "currency": "RUB"},
+                    "vat_code": vat_code,
+                    "quantity": "1.00",
+                    "payment_mode": "full_payment",
+                    "payment_subject": "service",
+                }
+            ],
+        },
+    }
+
+    logger.info(
+        "Creating YooKassa payment: amount=%s description=%r idempotency_key=%s email=%s",
+        amount_value,
+        description,
+        idempotency_key,
+        customer_email[:3] + "***" if len(customer_email) > 3 else "***",
+    )
+
     def _sync() -> YKPaymentResult:
         _configure(shop_id, api_key)
         _, YKPayment = _get_sdk()
-        response = YKPayment.create(
-            {
-                "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
-                "confirmation": {"type": "redirect", "return_url": return_url},
-                "capture": True,
-                "description": description,
-                "metadata": metadata,
-            },
-            idempotency_key,
+        try:
+            response = YKPayment.create(payload, idempotency_key)
+        except Exception as exc:
+            logger.error(
+                "YooKassa Payment.create failed: %s | idempotency_key=%s",
+                exc,
+                idempotency_key,
+            )
+            raise
+        logger.info(
+            "YooKassa payment created: yookassa_id=%s status=%s",
+            response.id,
+            response.status,
         )
         return YKPaymentResult(
             yookassa_id=response.id,
