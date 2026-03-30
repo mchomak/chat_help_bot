@@ -1,4 +1,4 @@
-"""Payment / subscription handlers (stub implementation)."""
+"""Payment / subscription handlers — YooKassa flow."""
 
 from __future__ import annotations
 
@@ -10,21 +10,19 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import tariffs_config
 from app.bot.keyboards.payment import (
     pack_selection_keyboard,
-    payment_confirm_keyboard,
+    payment_error_keyboard,
     payment_menu_keyboard,
+    payment_pending_keyboard,
     tariff_selection_keyboard,
 )
 from app.bot.keyboards.scenarios import back_to_menu_keyboard
-from app.config import settings as app_settings
-from app.db.repositories import user_repo
+from app.db.repositories import payment_repo, user_repo
+from app.db.models.payment import PaymentStatus
 from app.services.access_service import AccessStatus, check_access
-from app.services.payment_service import (
-    confirm_pack_payment,
-    confirm_tariff_payment,
-    create_stub_payment,
-)
+from app.services.payment_service import create_and_initiate_payment, poll_and_process_payment
 
 router = Router(name="payment")
 logger = logging.getLogger(__name__)
@@ -36,18 +34,8 @@ ACCESS_LABELS = {
     "paid": "✅ Подписка активна",
 }
 
-TARIFF_LABELS = {
-    "week": "1 неделя",
-    "month": "1 месяц",
-    "quarter": "3 месяца",
-}
 
-PACK_LABELS = {
-    "s": lambda: f"{app_settings.tariffs.pack_s_screenshots} скринов",
-    "m": lambda: f"{app_settings.tariffs.pack_m_screenshots} скринов",
-    "l": lambda: f"{app_settings.tariffs.pack_l_screenshots} скринов",
-}
-
+# ── Subscription status screen ──────────────────────────────────────────────
 
 @router.callback_query(F.data.in_({"menu:payment", "menu:subscription"}))
 async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
@@ -55,7 +43,6 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
     user_id = uuid.UUID(data["user_id"])
     status = await check_access(db_session, user_id)
     label = ACCESS_LABELS.get(status, status)
-
     lines = [f"Статус: {label}"]
 
     if status == AccessStatus.TRIAL:
@@ -72,8 +59,7 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
         if access:
             lines.append(f"Скриншотов осталось: {access.screenshots_balance}")
             if access.paid_until:
-                paid_until_str = access.paid_until.strftime("%d.%m.%Y")
-                lines.append(f"Подписка до: {paid_until_str}")
+                lines.append(f"Подписка до: {access.paid_until.strftime('%d.%m.%Y')}")
 
     if status in (AccessStatus.EXPIRED, AccessStatus.NONE):
         lines.append("\nЧтобы продолжить — оформите подписку.")
@@ -89,7 +75,7 @@ async def select_tariff(callback: types.CallbackQuery) -> None:
     await callback.answer()
     await callback.message.edit_text(
         "Выберите тариф подписки:\n\n"
-        "В каждый тариф уже включены базовые скриншоты. "
+        "В каждый тариф включены базовые скриншоты. "
         "Неиспользованные скриншоты сгорают по окончании периода.",
         reply_markup=tariff_selection_keyboard(),
     )
@@ -99,9 +85,9 @@ async def select_tariff(callback: types.CallbackQuery) -> None:
 async def create_tariff_payment(
     callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
 ) -> None:
-    tariff_key = callback.data.split(":")[-1]  # week / month / quarter
+    tariff_key = callback.data.split(":")[-1]
     try:
-        price, days, screenshots = app_settings.tariffs.get_tariff(tariff_key)
+        plan = tariffs_config.get_tariff(tariff_key)
     except KeyError:
         await callback.answer("Неверный тариф.")
         return
@@ -109,23 +95,27 @@ async def create_tariff_payment(
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    label = TARIFF_LABELS.get(tariff_key, tariff_key)
-    tx_id = await create_stub_payment(
-        db_session, user_id, amount=price,
-        comment=f"Tariff: {tariff_key}",
-    )
-    await db_session.commit()
-
     await callback.answer()
-    await callback.message.edit_text(
-        f"Тариф: {label}\n"
-        f"Сумма: {int(price)} ₽\n"
-        f"Срок: {days} дн.\n"
-        f"Скриншоты: {screenshots} шт.\n\n"
-        "В рабочей версии здесь будет ссылка для оплаты.\n"
-        "Для тестирования нажмите кнопку ниже.",
-        reply_markup=payment_confirm_keyboard(str(tx_id), "tariff", tariff_key),
+    await callback.message.edit_text("⏳ Создаём счёт на оплату...")
+
+    result = await create_and_initiate_payment(
+        db_session, user_id=user_id, purchase_type="tariff", purchase_key=tariff_key,
     )
+
+    if result.payment_url:
+        await callback.message.edit_text(
+            f"Тариф: {plan.label}\n"
+            f"Сумма: {int(plan.price)} ₽\n"
+            f"Срок: {plan.days} дн. · Скриншоты: {plan.base_screenshots} шт.\n\n"
+            "Нажмите кнопку для перехода к оплате. "
+            "После оплаты вернитесь и нажмите «Проверить статус».",
+            reply_markup=payment_pending_keyboard(result.payment_url, str(result.payment_id)),
+        )
+    else:
+        await callback.message.edit_text(
+            "⚠️ Не удалось создать счёт на оплату. Попробуйте позже.",
+            reply_markup=payment_error_keyboard(),
+        )
 
 
 # ── Screenshot pack selection ───────────────────────────────────────────────
@@ -153,9 +143,9 @@ async def select_pack(callback: types.CallbackQuery, state: FSMContext, db_sessi
 async def create_pack_payment(
     callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
 ) -> None:
-    pack_key = callback.data.split(":")[-1]  # s / m / l
+    pack_key = callback.data.split(":")[-1]
     try:
-        price, screenshots = app_settings.tariffs.get_pack(pack_key)
+        pack = tariffs_config.get_pack(pack_key)
     except KeyError:
         await callback.answer("Неверный пакет.")
         return
@@ -163,96 +153,67 @@ async def create_pack_payment(
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    tx_id = await create_stub_payment(
-        db_session, user_id, amount=price,
-        comment=f"Pack: {pack_key}",
-    )
-    await db_session.commit()
-
     await callback.answer()
-    await callback.message.edit_text(
-        f"Пакет скриншотов: {screenshots} шт.\n"
-        f"Сумма: {int(price)} ₽\n\n"
-        "Для тестирования нажмите кнопку ниже.",
-        reply_markup=payment_confirm_keyboard(str(tx_id), "pack", pack_key),
+    await callback.message.edit_text("⏳ Создаём счёт на оплату...")
+
+    result = await create_and_initiate_payment(
+        db_session, user_id=user_id, purchase_type="pack", purchase_key=pack_key,
     )
 
-
-# ── Confirm (stub) ──────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("pay:confirm:"))
-async def confirm_payment(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
-    # callback data: pay:confirm:{purchase_type}:{key}:{tx_id}
-    parts = callback.data.split(":")
-    if len(parts) < 5:
-        await callback.answer("Неверный формат данных.")
-        return
-
-    purchase_type = parts[2]   # tariff / pack
-    purchase_key = parts[3]    # week/month/quarter or s/m/l
-    tx_id_str = parts[4]
-
-    try:
-        tx_id = uuid.UUID(tx_id_str)
-    except ValueError:
-        await callback.answer("Неверный ID транзакции.")
-        return
-
-    data = await state.get_data()
-    user_id = uuid.UUID(data["user_id"])
-
-    if purchase_type == "tariff":
-        result = await confirm_tariff_payment(db_session, tx_id, user_id, purchase_key)
-        if result.success:
-            _, days, screenshots = app_settings.tariffs.get_tariff(purchase_key)
-            success_text = (
-                f"✅ Оплата прошла успешно!\n"
-                f"Доступ активирован на {days} дн., скриншоты: {screenshots} шт."
-            )
-        else:
-            success_text = ""
-
-    elif purchase_type == "pack":
-        result = await confirm_pack_payment(db_session, tx_id, user_id, purchase_key)
-        if result.success:
-            _price, screenshots = app_settings.tariffs.get_pack(purchase_key)
-            success_text = f"✅ Пакет добавлен! +{screenshots} скриншотов к балансу."
-        else:
-            success_text = ""
-    else:
-        await callback.answer("Неизвестный тип покупки.")
-        return
-
-    await db_session.commit()
-
-    if result.success:
-        await callback.answer("Оплата подтверждена ✓")
-        await callback.message.edit_text(success_text, reply_markup=back_to_menu_keyboard())
-
-        # Send referral bonus notification if applicable
-        if result.referrer_telegram_id is not None:
-            try:
-                await callback.bot.send_message(
-                    chat_id=result.referrer_telegram_id,
-                    text=(
-                        "🎉 По вашей реферальной ссылке кто-то оформил подписку!\n\n"
-                        f"Вам начислено:\n"
-                        f"• +{result.referral_bonus_days} дней доступа\n"
-                        f"• +{result.referral_bonus_screenshots} скриншотов"
-                    ),
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to send referral bonus notification to telegram_id=%s",
-                    result.referrer_telegram_id,
-                )
-    else:
-        await callback.answer("Транзакция не найдена или уже была обработана.")
+    if result.payment_url:
         await callback.message.edit_text(
-            "Транзакция не найдена или уже была обработана ранее.",
-            reply_markup=back_to_menu_keyboard(),
+            f"Пакет: {pack.label}\n"
+            f"Сумма: {int(pack.price)} ₽\n\n"
+            "Нажмите кнопку для перехода к оплате. "
+            "После оплаты нажмите «Проверить статус».",
+            reply_markup=payment_pending_keyboard(result.payment_url, str(result.payment_id)),
+        )
+    else:
+        await callback.message.edit_text(
+            "⚠️ Не удалось создать счёт на оплату. Попробуйте позже.",
+            reply_markup=payment_error_keyboard(),
         )
 
+
+# ── Poll payment status (user-initiated) ────────────────────────────────────
+
+@router.callback_query(F.data.startswith("pay:poll:"))
+async def poll_payment(
+    callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession,
+) -> None:
+    payment_id_str = callback.data.split(":")[-1]
+    try:
+        payment_id = uuid.UUID(payment_id_str)
+    except ValueError:
+        await callback.answer("Неверный ID платежа.")
+        return
+
+    await callback.answer("Проверяем статус...")
+
+    new_status = await poll_and_process_payment(db_session, callback.bot, payment_id)
+    await db_session.commit()
+
+    if new_status == PaymentStatus.SUCCEEDED:
+        await callback.message.edit_text(
+            "✅ Оплата подтверждена! Доступ и скриншоты уже начислены.",
+            reply_markup=back_to_menu_keyboard(),
+        )
+    elif new_status == PaymentStatus.CANCELED:
+        await callback.message.edit_text(
+            "❌ Платёж отменён. Вы можете создать новый.",
+            reply_markup=payment_menu_keyboard(),
+        )
+    elif new_status == PaymentStatus.WAITING_FOR_PAYMENT:
+        payment = await payment_repo.get_payment(db_session, payment_id)
+        if payment and payment.payment_url:
+            await callback.answer("Оплата ещё не поступила.", show_alert=True)
+        else:
+            await callback.answer("Ожидаем оплату...", show_alert=True)
+    else:
+        await callback.answer(f"Статус: {new_status}", show_alert=True)
+
+
+# ── General status check ─────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "pay:check")
 async def check_payment_status(
