@@ -79,49 +79,17 @@ class TrialConfig:
 
 
 @dataclass(frozen=True)
-class TariffsConfig:
-    """All tariff plans and screenshot packs — single source of truth for pricing/limits."""
+class YooKassaConfig:
+    shop_id: str = field(default_factory=lambda: _env("YOOKASSA_SHOP_ID", ""))
+    api_key: str = field(default_factory=lambda: _env("YOOKASSA_API_KEY", ""))
+    # URL user is redirected to after completing / cancelling payment in YooKassa
+    return_url: str = field(default_factory=lambda: _env("YOOKASSA_RETURN_URL", ""))
+    # Path on our server that receives YooKassa webhook notifications
+    webhook_path: str = field(default_factory=lambda: _env("YOOKASSA_WEBHOOK_PATH", "/yookassa/webhook"))
 
-    # Subscription tariffs: (price RUB, access days, base screenshots included)
-    week_price: float = field(default_factory=lambda: _env_float("TARIFF_WEEK_PRICE", 200.0))
-    week_days: int = field(default_factory=lambda: _env_int("TARIFF_WEEK_DAYS", 7))
-    week_screenshots: int = field(default_factory=lambda: _env_int("TARIFF_WEEK_SCREENSHOTS", 300))
-
-    month_price: float = field(default_factory=lambda: _env_float("TARIFF_MONTH_PRICE", 500.0))
-    month_days: int = field(default_factory=lambda: _env_int("TARIFF_MONTH_DAYS", 30))
-    month_screenshots: int = field(default_factory=lambda: _env_int("TARIFF_MONTH_SCREENSHOTS", 300))
-
-    quarter_price: float = field(default_factory=lambda: _env_float("TARIFF_QUARTER_PRICE", 1000.0))
-    quarter_days: int = field(default_factory=lambda: _env_int("TARIFF_QUARTER_DAYS", 90))
-    quarter_screenshots: int = field(default_factory=lambda: _env_int("TARIFF_QUARTER_SCREENSHOTS", 300))
-
-    # Screenshot add-on packs: (price RUB, screenshots count)
-    pack_s_price: float = field(default_factory=lambda: _env_float("PACK_S_PRICE", 500.0))
-    pack_s_screenshots: int = field(default_factory=lambda: _env_int("PACK_S_SCREENSHOTS", 300))
-
-    pack_m_price: float = field(default_factory=lambda: _env_float("PACK_M_PRICE", 1000.0))
-    pack_m_screenshots: int = field(default_factory=lambda: _env_int("PACK_M_SCREENSHOTS", 1000))
-
-    pack_l_price: float = field(default_factory=lambda: _env_float("PACK_L_PRICE", 4000.0))
-    pack_l_screenshots: int = field(default_factory=lambda: _env_int("PACK_L_SCREENSHOTS", 5000))
-
-    def get_tariff(self, key: str) -> tuple[float, int, int]:
-        """Return (price, days, base_screenshots) for a subscription key: week/month/quarter."""
-        mapping = {
-            "week": (self.week_price, self.week_days, self.week_screenshots),
-            "month": (self.month_price, self.month_days, self.month_screenshots),
-            "quarter": (self.quarter_price, self.quarter_days, self.quarter_screenshots),
-        }
-        return mapping[key]
-
-    def get_pack(self, key: str) -> tuple[float, int]:
-        """Return (price, screenshots) for a pack key: s/m/l."""
-        mapping = {
-            "s": (self.pack_s_price, self.pack_s_screenshots),
-            "m": (self.pack_m_price, self.pack_m_screenshots),
-            "l": (self.pack_l_price, self.pack_l_screenshots),
-        }
-        return mapping[key]
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.shop_id and self.api_key)
 
 
 @dataclass(frozen=True)
@@ -131,11 +99,11 @@ class AppConfig:
     ai: AIConfig = field(default_factory=AIConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     trial: TrialConfig = field(default_factory=TrialConfig)
-    tariffs: TariffsConfig = field(default_factory=TariffsConfig)
+    yookassa: YooKassaConfig = field(default_factory=YooKassaConfig)
     debug: bool = field(default_factory=lambda: _env("DEBUG", "false").lower() == "true")
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
     temp_dir: Path = field(default_factory=lambda: Path(_env("TEMP_DIR", "/tmp/chat_help_bot")))
-    # Screenshots given to a user when trial activates (also used as monthly_image_limit fallback)
+    # Screenshots given to a user when trial activates
     monthly_image_limit: int = field(default_factory=lambda: _env_int("MONTHLY_IMAGE_LIMIT", 300))
     # Legal documents shown at first launch (leave empty to omit the buttons)
     user_agreement_url: str = field(default_factory=lambda: _env("USER_AGREEMENT_URL", ""))

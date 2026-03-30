@@ -2,7 +2,7 @@
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.config import settings
+from app import tariffs_config
 
 
 def payment_menu_keyboard() -> InlineKeyboardMarkup:
@@ -17,57 +17,45 @@ def payment_menu_keyboard() -> InlineKeyboardMarkup:
 
 
 def tariff_selection_keyboard() -> InlineKeyboardMarkup:
-    t = settings.tariffs
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"1 неделя — {int(t.week_price)} ₽  ({t.week_screenshots} скринов)",
-                callback_data="pay:tariff:week",
-            )],
-            [InlineKeyboardButton(
-                text=f"1 месяц — {int(t.month_price)} ₽  ({t.month_screenshots} скринов)",
-                callback_data="pay:tariff:month",
-            )],
-            [InlineKeyboardButton(
-                text=f"3 месяца — {int(t.quarter_price)} ₽  ({t.quarter_screenshots} скринов)",
-                callback_data="pay:tariff:quarter",
-            )],
-            [InlineKeyboardButton(text="Назад", callback_data="menu:subscription")],
-        ],
-    )
+    rows = []
+    for plan in tariffs_config.TARIFFS.values():
+        rows.append([InlineKeyboardButton(
+            text=f"{plan.label} — {int(plan.price)} ₽  ({plan.base_screenshots} скринов)",
+            callback_data=f"pay:tariff:{plan.key}",
+        )])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:subscription")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def pack_selection_keyboard() -> InlineKeyboardMarkup:
-    t = settings.tariffs
+    rows = []
+    for pack in tariffs_config.PACKS.values():
+        rows.append([InlineKeyboardButton(
+            text=f"{pack.label} — {int(pack.price)} ₽",
+            callback_data=f"pay:pack:{pack.key}",
+        )])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:subscription")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_pending_keyboard(payment_url: str, payment_id: str) -> InlineKeyboardMarkup:
+    """Keyboard shown after a payment is created: link to YooKassa + status check."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Перейти к оплате", url=payment_url)],
             [InlineKeyboardButton(
-                text=f"{t.pack_s_screenshots} скринов — {int(t.pack_s_price)} ₽",
-                callback_data="pay:pack:s",
+                text="🔄 Проверить статус оплаты",
+                callback_data=f"pay:poll:{payment_id}",
             )],
-            [InlineKeyboardButton(
-                text=f"{t.pack_m_screenshots} скринов — {int(t.pack_m_price)} ₽",
-                callback_data="pay:pack:m",
-            )],
-            [InlineKeyboardButton(
-                text=f"{t.pack_l_screenshots} скринов — {int(t.pack_l_price)} ₽",
-                callback_data="pay:pack:l",
-            )],
-            [InlineKeyboardButton(text="Назад", callback_data="menu:subscription")],
+            [InlineKeyboardButton(text="В меню", callback_data="back:menu")],
         ],
     )
 
 
-def payment_confirm_keyboard(tx_id: str, purchase_type: str, purchase_key: str) -> InlineKeyboardMarkup:
-    """Stub: confirm test payment (for development/testing only).
-
-    Encodes purchase type and key in the callback so the confirm handler
-    knows what to credit without FSM state.
-    """
-    confirm_data = f"pay:confirm:{purchase_type}:{purchase_key}:{tx_id}"
+def payment_error_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="[DEV] Подтвердить оплату", callback_data=confirm_data)],
+            [InlineKeyboardButton(text="Попробовать снова", callback_data="pay:select_tariff")],
             [InlineKeyboardButton(text="В меню", callback_data="back:menu")],
         ],
     )

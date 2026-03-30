@@ -35,6 +35,39 @@ async def health_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "detail": str(exc)}, status=503)
 
 
+async def yookassa_webhook_handler(request: web.Request) -> web.Response:
+    """Receive YooKassa payment status notifications.
+
+    We re-verify the payment status directly from the YooKassa API instead of
+    trusting the webhook payload, so no additional signature check is needed.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        logger.warning("YooKassa webhook: could not parse JSON body")
+        return web.Response(status=400)
+
+    if body.get("type") != "notification":
+        return web.Response(status=200)  # Ignore non-notification events
+
+    event_object = body.get("object", {})
+    yookassa_payment_id = event_object.get("id")
+
+    if not yookassa_payment_id:
+        logger.warning("YooKassa webhook: missing payment id in body")
+        return web.Response(status=400)
+
+    bot: Bot = request.app["bot"]
+    factory = get_session_factory()
+
+    async with factory() as session:
+        from app.services.payment_service import process_webhook
+        await process_webhook(session, bot, yookassa_payment_id)
+        await session.commit()
+
+    return web.Response(status=200)
+
+
 async def on_startup(app: web.Application) -> None:
     bot: Bot = app["bot"]
     webhook_url = settings.bot.webhook_url
@@ -71,6 +104,7 @@ def main() -> None:
     )
     webhook_handler.register(app, path=settings.bot.webhook_path)
     app.router.add_get("/health", health_handler)
+    app.router.add_post(settings.yookassa.webhook_path, yookassa_webhook_handler)
     setup_application(app, dp, bot=bot)
 
     app.on_startup.append(on_startup)
