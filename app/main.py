@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import socket
+from urllib.parse import urlparse
 
 from aiohttp import web
 from aiogram import Bot
@@ -94,15 +97,99 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
     return web.Response(status=200)
 
 
+async def _dns_resolves(hostname: str) -> bool:
+    """Return True if hostname resolves via local DNS (non-blocking)."""
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
+        return True
+    except (socket.gaierror, OSError):
+        return False
+
+
 async def on_startup(app: web.Application) -> None:
     bot: Bot = app["bot"]
     webhook_url = settings.bot.webhook_url
+
+    # ── 1. Validate webhook URL structure ────────────────────────────────────
+    parsed = urlparse(webhook_url)
+    host = parsed.hostname or ""
+
+    if not host:
+        logger.critical(
+            "WEBHOOK_HOST is empty or not set. "
+            "Add WEBHOOK_HOST=https://yourdomain.com to .env and restart."
+        )
+        raise RuntimeError("WEBHOOK_HOST is not configured")
+
+    if parsed.scheme != "https":
+        logger.critical(
+            "Telegram requires HTTPS for webhooks. "
+            "WEBHOOK_HOST must start with 'https://'. Got: %r", webhook_url,
+        )
+        raise RuntimeError(f"Webhook URL must use HTTPS, got: {webhook_url!r}")
+
     logger.info("Setting webhook: %s", webhook_url)
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=settings.bot.webhook_secret or None,
-        drop_pending_updates=True,
-    )
+
+    # ── 2. DNS pre-check — warn if hostname doesn't resolve locally ───────────
+    # Local resolution failure is a strong signal that Telegram will also fail.
+    # The most common cause with DuckDNS: the update URL was never called to
+    # point the subdomain at this server's IP.
+    if not await _dns_resolves(host):
+        logger.warning(
+            "Webhook host %r does not resolve via local DNS.\n"
+            "  If using DuckDNS, update the record now:\n"
+            "    curl 'https://www.duckdns.org/update?domains=<subdomain>"
+            "&token=<token>&ip='\n"
+            "  Then check: nslookup %s\n"
+            "  Telegram will likely reject set_webhook with 'Failed to resolve host'.",
+            host, host,
+        )
+    else:
+        logger.info("DNS check passed: %r resolves OK", host)
+
+    # ── 3. set_webhook with exponential-backoff retries ───────────────────────
+    # Retries handle transient cases: container starts before DuckDNS update
+    # script runs, or a brief network hiccup right after boot.
+    _ATTEMPTS = 4          # total tries
+    _BASE_DELAY = 2        # seconds — doubles each retry: 2, 4, 8
+    last_exc: Exception | None = None
+
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            await bot.set_webhook(
+                url=webhook_url,
+                secret_token=settings.bot.webhook_secret or None,
+                drop_pending_updates=True,
+            )
+            logger.info("Webhook set successfully (attempt %d/%d)", attempt, _ATTEMPTS)
+            break
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "set_webhook attempt %d/%d failed: %s", attempt, _ATTEMPTS, exc,
+            )
+            if attempt < _ATTEMPTS:
+                delay = _BASE_DELAY ** attempt   # 2, 4, 8 s
+                logger.info("Retrying in %ds...", delay)
+                await asyncio.sleep(delay)
+    else:
+        logger.critical(
+            "Failed to set Telegram webhook after %d attempts.\n"
+            "  Webhook URL : %s\n"
+            "  Host        : %s\n"
+            "  Last error  : %s\n"
+            "Checklist:\n"
+            "  1. DuckDNS record updated? Call the update URL and verify with:\n"
+            "       nslookup %s\n"
+            "  2. nginx running and port 443 open in firewall?\n"
+            "       curl -I https://%s/health\n"
+            "  3. TLS certificate valid for this domain?\n"
+            "       certbot certificates",
+            _ATTEMPTS, webhook_url, host, last_exc, host, host,
+        )
+        raise RuntimeError(f"Cannot set Telegram webhook: {last_exc}") from last_exc
+
     # Ensure temp dir exists
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Bot started, webhook set")
