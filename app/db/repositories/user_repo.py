@@ -6,7 +6,7 @@ import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.user import User, UserAccess, UserConsent, UserSettings
@@ -51,14 +51,16 @@ async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Us
 
 
 async def count_paid_referrals(session: AsyncSession, referrer_telegram_id: int) -> int:
-    """Count users referred by referrer_telegram_id who have triggered the bonus."""
+    """Count unique users referred by referrer_telegram_id who have made at least one successful tariff payment."""
+    from app.db.models.payment import Payment, PaymentStatus  # local import avoids circular dependency
     stmt = (
-        select(func.count())
+        select(func.count(User.id.distinct()))
         .select_from(User)
-        .join(UserAccess, UserAccess.user_id == User.id)
+        .join(Payment, Payment.user_id == User.id)
         .where(
             User.referred_by_telegram_id == referrer_telegram_id,
-            UserAccess.referral_bonus_granted.is_(True),
+            Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.purchase_type == "tariff",
         )
     )
     result = await session.execute(stmt)
@@ -120,3 +122,9 @@ async def get_access(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | 
     stmt = select(UserAccess).where(UserAccess.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def update_user_email(session: AsyncSession, user_id: uuid.UUID, email: str) -> None:
+    stmt = update(User).where(User.id == user_id).values(email=email)
+    await session.execute(stmt)
+    await session.flush()

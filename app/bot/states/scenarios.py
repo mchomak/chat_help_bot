@@ -46,3 +46,7 @@ class ReplyMessageStates(StatesGroup):
 
 class ProfileReviewStates(StatesGroup):
     waiting_input = State()
+
+
+class PaymentStates(StatesGroup):
+    waiting_email = State()

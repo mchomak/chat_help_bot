@@ -86,6 +86,8 @@ class YooKassaConfig:
     return_url: str = field(default_factory=lambda: _env("YOOKASSA_RETURN_URL", ""))
     # Path on our server that receives YooKassa webhook notifications
     webhook_path: str = field(default_factory=lambda: _env("YOOKASSA_WEBHOOK_PATH", "/yookassa/webhook"))
+    # VAT code for receipt items: 1=no VAT, 2=0%, 4=10%, 5=10/110, 6=20%, 7=20/120
+    vat_code: int = field(default_factory=lambda: _env_int("YOOKASSA_VAT_CODE", 1))
 
     @property
     def is_configured(self) -> bool:

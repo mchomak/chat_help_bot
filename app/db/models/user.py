@@ -21,6 +21,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     language_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # Telegram ID of the user who invited this user (set once at registration)
     referred_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Email for YooKassa receipts (optional until first payment attempt)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class UserSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
