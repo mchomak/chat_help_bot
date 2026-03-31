@@ -30,7 +30,7 @@ class ScreenshotPack:
 # ── Subscription plans ──────────────────────────────────────────────────────
 
 TARIFFS: dict[str, TariffPlan] = {
-    "week":    TariffPlan("week",    "1 неделя",   10.0,   7, 300),
+    "week":    TariffPlan("week",    "1 неделя",   200.0,   7, 300),
     "month":   TariffPlan("month",   "1 месяц",    500.0,  30, 300),
     "quarter": TariffPlan("quarter", "3 месяца",  1000.0,  90, 300),
 }
