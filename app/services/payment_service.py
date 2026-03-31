@@ -74,7 +74,7 @@ async def create_and_initiate_payment(
     await session.commit()
 
     logger.info(
-        "Initiating payment: user_id=%s type=%s key=%s amount=%.2f email=%s payment_db_id=%s",
+        "[PAYMENT CREATE] user_id=%s type=%s key=%s amount=%.2f email=%s payment_db_id=%s",
         user_id,
         purchase_type,
         purchase_key,
@@ -99,13 +99,19 @@ async def create_and_initiate_payment(
         payment.payment_url = result.confirmation_url
         payment.status = PaymentStatus.WAITING_FOR_PAYMENT
         await session.commit()
+        logger.info(
+            "[PAYMENT CREATE] YooKassa payment created: db_id=%s yk_id=%s url=%s",
+            payment.id, result.yookassa_id, result.confirmation_url,
+        )
         return InitiateResult(payment_id=payment.id, payment_url=result.confirmation_url, error=None)
 
     except RuntimeError as exc:
         payment.status = PaymentStatus.API_ERROR
         payment.error_message = str(exc)
         await session.commit()
-        logger.error("YooKassa API error for payment %s: %s", payment.id, exc)
+        logger.error(
+            "[PAYMENT CREATE] YooKassa API error for db_id=%s: %s", payment.id, exc,
+        )
         return InitiateResult(payment_id=payment.id, payment_url=None, error=str(exc))
 
 
@@ -117,14 +123,42 @@ async def poll_and_process_payment(
     """Fetch current YooKassa status, process if succeeded/canceled. Returns new status."""
     payment = await payment_repo.get_payment(session, payment_id)
     if payment is None:
+        logger.warning("[POLL] payment_id=%s not found in DB", payment_id)
         return "not_found"
 
-    # Terminal states — nothing to poll
-    if payment.status in (PaymentStatus.SUCCEEDED, PaymentStatus.CANCELED, PaymentStatus.FAILED):
+    logger.info(
+        "[POLL] payment_id=%s user_id=%s type=%s key=%s status=%s "
+        "goods_granted=%s yk_id=%s",
+        payment.id, payment.user_id, payment.purchase_type, payment.purchase_key,
+        payment.status, payment.goods_granted, payment.yookassa_payment_id,
+    )
+
+    # Canceled/failed payments can never become successful — skip
+    if payment.status in (PaymentStatus.CANCELED, PaymentStatus.FAILED):
+        logger.info("[POLL] payment %s is in terminal state %s — nothing to do",
+                    payment.id, payment.status)
         return payment.status
 
+    # Succeeded AND goods already granted — truly nothing to do
+    if payment.status == PaymentStatus.SUCCEEDED and payment.goods_granted:
+        logger.info("[POLL] payment %s already succeeded with goods granted — nothing to do",
+                    payment.id)
+        return payment.status
+
+    # If payment.status == SUCCEEDED but goods_granted == False:
+    # this means a previous attempt failed after writing the status to DB —
+    # we MUST continue and re-attempt to grant goods.
+    if payment.status == PaymentStatus.SUCCEEDED and not payment.goods_granted:
+        logger.warning(
+            "[POLL] payment %s has status=succeeded but goods_granted=False — "
+            "will re-attempt goods grant",
+            payment.id,
+        )
+
     if payment.yookassa_payment_id is None:
-        return payment.status  # api_error — no yookassa id yet
+        logger.warning("[POLL] payment %s has no yookassa_payment_id — cannot poll YooKassa",
+                       payment.id)
+        return payment.status
 
     try:
         yk_status = await yookassa_service.fetch_payment_status(
@@ -133,8 +167,12 @@ async def poll_and_process_payment(
             yookassa_payment_id=payment.yookassa_payment_id,
         )
     except RuntimeError as exc:
-        logger.warning("Failed to poll YooKassa status for %s: %s", payment.id, exc)
+        logger.warning("[POLL] failed to fetch YooKassa status for payment %s: %s",
+                       payment.id, exc)
         return payment.status
+
+    logger.info("[POLL] YooKassa returned status=%s for payment %s (DB status=%s)",
+                yk_status, payment.id, payment.status)
 
     await _apply_yookassa_status(session, bot, payment, yk_status)
     return payment.status
@@ -149,10 +187,18 @@ async def process_webhook(
 
     Idempotent: safe to call multiple times for the same payment.
     """
+    logger.info("[WEBHOOK] received for yookassa_payment_id=%s", yookassa_payment_id)
+
     payment = await payment_repo.get_by_yookassa_id(session, yookassa_payment_id)
     if payment is None:
-        logger.warning("Webhook for unknown yookassa_payment_id=%s", yookassa_payment_id)
+        logger.warning("[WEBHOOK] no DB payment found for yookassa_payment_id=%s",
+                       yookassa_payment_id)
         return
+
+    logger.info(
+        "[WEBHOOK] payment found: db_id=%s user_id=%s status=%s goods_granted=%s",
+        payment.id, payment.user_id, payment.status, payment.goods_granted,
+    )
 
     # Re-verify status directly from YooKassa (don't blindly trust webhook body)
     try:
@@ -162,8 +208,12 @@ async def process_webhook(
             yookassa_payment_id=yookassa_payment_id,
         )
     except RuntimeError as exc:
-        logger.error("Cannot verify webhook status for %s: %s", yookassa_payment_id, exc)
+        logger.error("[WEBHOOK] cannot verify status for yk_id=%s: %s",
+                     yookassa_payment_id, exc)
         return
+
+    logger.info("[WEBHOOK] verified YooKassa status=%s for yk_id=%s",
+                yk_status, yookassa_payment_id)
 
     await _apply_yookassa_status(session, bot, payment, yk_status)
 
@@ -187,21 +237,54 @@ async def _apply_yookassa_status(
     new_status = _YK_TO_INTERNAL.get(yk_status, PaymentStatus.FAILED)
 
     if new_status == payment.status and payment.goods_granted:
+        logger.debug("[APPLY] payment %s already at status=%s with goods_granted — no-op",
+                     payment.id, new_status)
         return  # Already processed — idempotent skip
 
-    payment.status = new_status
+    logger.info("[APPLY] payment %s: %s → %s (goods_granted=%s)",
+                payment.id, payment.status, new_status, payment.goods_granted)
 
     if new_status == PaymentStatus.SUCCEEDED and not payment.goods_granted:
-        grant_result = await _grant_goods(session, payment)
+        # IMPORTANT: do NOT set payment.status = succeeded before _grant_goods.
+        #
+        # SQLAlchemy has autoflush=True: any session.execute(SELECT) inside
+        # _grant_goods would flush the dirty payment object, writing
+        # payment.status="succeeded" to the DB transaction. If _grant_goods
+        # then raises, ErrorLoggingMiddleware (the outer middleware) catches
+        # the exception and calls db_session.commit() — which would commit
+        # payment.status="succeeded" while goods_granted remains False.
+        # Next poll would then see status=succeeded and return early (Bug #1),
+        # making the subscription permanently unactivatable.
+        #
+        # Solution: set payment.status ONLY after _grant_goods succeeds.
+        # If _grant_goods raises, payment.status stays as waiting_for_payment,
+        # and the user can safely retry by clicking "Проверить статус" again.
+        try:
+            grant_result = await _grant_goods(session, payment)
+        except Exception:
+            logger.exception(
+                "[APPLY] _grant_goods failed for payment %s (user_id=%s type=%s key=%s) — "
+                "payment.status NOT updated; user can retry",
+                payment.id, payment.user_id, payment.purchase_type, payment.purchase_key,
+            )
+            raise
+
         payment.goods_granted = True
+        payment.status = new_status  # Set AFTER successful grant
         await session.flush()
+        logger.info(
+            "[APPLY] goods granted, status set to %s for payment %s (user_id=%s)",
+            new_status, payment.id, payment.user_id,
+        )
         await _send_success_notification(bot, payment, grant_result)
 
     elif new_status in (PaymentStatus.CANCELED, PaymentStatus.FAILED):
+        payment.status = new_status
         await session.flush()
         await _send_cancel_notification(bot, payment)
 
     else:
+        payment.status = new_status
         await session.flush()
 
 
@@ -217,23 +300,41 @@ async def _grant_goods(session: AsyncSession, payment: Payment) -> GrantResult:
         access = (
             await session.execute(select(UserAccess).where(UserAccess.user_id == user_id))
         ).scalar_one_or_none()
+
         if access and access.paid_until:
             current_until = access.paid_until
             if current_until.tzinfo is None:
                 current_until = current_until.replace(tzinfo=datetime.UTC)
             base = current_until if current_until > now else now
+            logger.debug(
+                "[GRANT] payment %s: extending from %s (active=%s)",
+                payment.id, current_until.isoformat(), current_until > now,
+            )
         else:
             base = now
+            logger.debug("[GRANT] payment %s: no active subscription — starting from now",
+                         payment.id)
 
         paid_until = base + datetime.timedelta(days=plan.days)
+        logger.info(
+            "[GRANT] tariff: user_id=%s plan=%s days=%d paid_until=%s screenshots=%d payment=%s",
+            user_id, plan.key, plan.days, paid_until.isoformat(),
+            plan.base_screenshots, payment.id,
+        )
         await grant_paid_access(
             session, user_id, paid_until, payment.id,
             base_screenshots=plan.base_screenshots,
         )
-        return GrantResult(**await _maybe_grant_referral_bonus(session, user_id, payment.id))
+        referral_result = await _maybe_grant_referral_bonus(session, user_id, payment.id)
+        logger.debug("[GRANT] referral result for payment %s: %s", payment.id, referral_result)
+        return GrantResult(**referral_result)
 
     else:  # pack
         pack = tariffs_config.get_pack(payment.purchase_key)
+        logger.info(
+            "[GRANT] pack: user_id=%s pack=%s screenshots=%d payment=%s",
+            user_id, pack.key, pack.screenshots, payment.id,
+        )
         await add_screenshot_pack(session, user_id, pack.screenshots)
         await session.flush()
         return GrantResult()
@@ -255,12 +356,15 @@ async def _maybe_grant_referral_bonus(
 
     referrer = await user_repo.get_user_by_telegram_id(session, payer.referred_by_telegram_id)
     if referrer is None:
+        logger.warning("[REFERRAL] referred_by_telegram_id=%s not found in DB",
+                       payer.referred_by_telegram_id)
         return {"referrer_telegram_id": None, "referral_bonus_days": 0, "referral_bonus_screenshots": 0}
 
     referrer_access = (
         await session.execute(select(UserAccess).where(UserAccess.user_id == referrer.id))
     ).scalar_one_or_none()
     if referrer_access is None:
+        logger.warning("[REFERRAL] UserAccess not found for referrer id=%s", referrer.id)
         return {"referrer_telegram_id": None, "referral_bonus_days": 0, "referral_bonus_screenshots": 0}
 
     bonus_days = app_settings.referral_reward_days
@@ -278,6 +382,12 @@ async def _maybe_grant_referral_bonus(
         base = now
 
     new_paid_until = base + datetime.timedelta(days=bonus_days)
+    logger.info(
+        "[REFERRAL] granting bonus to referrer tg_id=%s: +%d days +%d screenshots "
+        "new_paid_until=%s (payment=%s)",
+        payer.referred_by_telegram_id, bonus_days, bonus_screenshots,
+        new_paid_until.isoformat(), payment_id,
+    )
     await grant_paid_access(
         session, referrer.id, new_paid_until, payment_id,
         base_screenshots=referrer_access.screenshots_balance + bonus_screenshots,
@@ -308,7 +418,8 @@ async def _send_success_notification(bot: Bot, payment: Payment, grant_result: G
                 text = f"✅ Пакет добавлен! +{pack.screenshots} скриншотов к балансу."
             await bot.send_message(chat_id=user, text=text)
     except Exception:
-        logger.warning("Could not send success notification for payment %s", payment.id)
+        logger.warning("Could not send success notification for payment %s", payment.id,
+                       exc_info=True)
 
     if grant_result.referrer_telegram_id:
         try:
@@ -322,7 +433,8 @@ async def _send_success_notification(bot: Bot, payment: Payment, grant_result: G
                 ),
             )
         except Exception:
-            logger.warning("Could not send referral notification to %s", grant_result.referrer_telegram_id)
+            logger.warning("Could not send referral notification to %s",
+                           grant_result.referrer_telegram_id, exc_info=True)
 
 
 async def _send_cancel_notification(bot: Bot, payment: Payment) -> None:
@@ -334,7 +446,8 @@ async def _send_cancel_notification(bot: Bot, payment: Payment) -> None:
                 text="❌ Оплата отменена или не прошла. Если это ошибка — попробуйте ещё раз.",
             )
     except Exception:
-        logger.warning("Could not send cancel notification for payment %s", payment.id)
+        logger.warning("Could not send cancel notification for payment %s", payment.id,
+                       exc_info=True)
 
 
 async def _get_telegram_id_for_user(bot: Bot, user_id: uuid.UUID) -> int | None:

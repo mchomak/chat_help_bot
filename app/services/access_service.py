@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 
 from sqlalchemy import select, update
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.models.user import UserAccess
+
+logger = logging.getLogger(__name__)
 
 
 class AccessStatus:
@@ -96,6 +99,10 @@ async def grant_paid_access(
 
     Resets screenshots_balance to base_screenshots (unused old screenshots burn).
     """
+    logger.info(
+        "[ACCESS] grant_paid_access: user_id=%s paid_until=%s screenshots=%d payment_id=%s",
+        user_id, paid_until.isoformat(), base_screenshots, payment_id,
+    )
     stmt = (
         update(UserAccess)
         .where(UserAccess.user_id == user_id)
@@ -106,8 +113,12 @@ async def grant_paid_access(
             screenshots_balance=base_screenshots,
         )
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
     await session.flush()
+    logger.info(
+        "[ACCESS] grant_paid_access complete: rows_updated=%s user_id=%s",
+        result.rowcount, user_id,
+    )
 
 
 async def add_screenshot_pack(
