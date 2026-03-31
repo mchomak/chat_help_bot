@@ -125,9 +125,15 @@ async def fetch_payment_status(
         _configure(shop_id, api_key)
         _, YKPayment = _get_sdk()
         response = YKPayment.find_one(yookassa_payment_id)
+        logger.info(
+            "YooKassa.find_one(%s) → status=%s", yookassa_payment_id, response.status,
+        )
         return response.status
 
     try:
         return await asyncio.to_thread(_sync)
     except Exception as exc:
+        logger.error(
+            "fetch_payment_status failed for yk_id=%s: %s", yookassa_payment_id, exc,
+        )
         raise RuntimeError(f"YooKassa API error: {exc}") from exc
