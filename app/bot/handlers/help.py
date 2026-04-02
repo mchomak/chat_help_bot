@@ -36,7 +36,7 @@ def help_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text="Канал ТП",
-                url="https://t.me/chat_help_12",
+                url="https://t.me/chat_help_24",
             ),
             InlineKeyboardButton(
                 text="Чат ТП",
