@@ -105,7 +105,9 @@ class AppConfig:
     debug: bool = field(default_factory=lambda: _env("DEBUG", "false").lower() == "true")
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
     temp_dir: Path = field(default_factory=lambda: Path(_env("TEMP_DIR", "/tmp/chat_help_bot")))
-    # Screenshots given to a user when trial activates
+    # Screenshots given to a user when trial activates (free, one-time)
+    trial_image_limit: int = field(default_factory=lambda: _env_int("TRIAL_IMAGE_LIMIT", 100))
+    # Deprecated alias kept for backward compatibility — no longer used in business logic
     monthly_image_limit: int = field(default_factory=lambda: _env_int("MONTHLY_IMAGE_LIMIT", 300))
     # Legal documents shown at first launch (leave empty to omit the buttons)
     user_agreement_url: str = field(default_factory=lambda: _env("USER_AGREEMENT_URL", ""))

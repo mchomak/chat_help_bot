@@ -6,6 +6,7 @@ Steps: 1) Gender  2) Age  3) City  4) Goals  5) Interests
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from aiogram import F, Router, types
@@ -23,6 +24,7 @@ from app.bot.states.onboarding import OnboardingStates
 from app.db.repositories import user_repo
 
 router = Router(name="onboarding")
+logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 8
 
@@ -221,18 +223,42 @@ async def _finish_onboarding(
     state: FSMContext,
     db_session: AsyncSession,
 ) -> None:
+    from app.services.access_service import activate_trial
+
     data = await state.get_data()
-    await user_repo.update_settings(
-        db_session, uuid.UUID(data["user_id"]),
-        onboarding_completed=True,
-    )
+    user_id = uuid.UUID(data["user_id"])
+    await user_repo.update_settings(db_session, user_id, onboarding_completed=True)
     await db_session.commit()
     await state.set_state(None)
+
+    # Activate trial once onboarding is complete (first-time users only).
+    # activate_trial returns None if trial was already used — safe to call multiple times.
+    trial_access = await activate_trial(db_session, user_id)
+    if trial_access is not None:
+        await db_session.commit()
+        logger.info(
+            "[ONBOARDING] trial activated for user_id=%s: expires=%s screenshots=%d",
+            user_id, trial_access.trial_expires_at.isoformat(), trial_access.screenshots_balance,
+        )
+        from app.config import settings as app_settings
+        trial_msg = (
+            "🎁 Вам активирован пробный период!\n\n"
+            f"• ⏳ Длительность: {app_settings.trial.duration_hours} ч.\n"
+            f"• 📸 Скриншоты: {trial_access.screenshots_balance} шт.\n\n"
+            "Попробуйте все функции бота — пробный период уже идёт."
+        )
+    else:
+        trial_msg = None
+        logger.debug("[ONBOARDING] trial already used for user_id=%s — skipping activation", user_id)
 
     if isinstance(event, types.CallbackQuery):
         await event.answer("Настройка завершена ✓")
         await event.message.edit_text("Всё готово! Теперь бот знает о вас чуть больше 🙌")
+        if trial_msg:
+            await event.message.answer(trial_msg)
         await send_menu(event.message)
     else:
         await event.answer("Всё готово! Теперь бот знает о вас чуть больше 🙌")
+        if trial_msg:
+            await event.answer(trial_msg)
         await send_menu(event)

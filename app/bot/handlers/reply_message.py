@@ -14,10 +14,13 @@ from app.bot.keyboards.scenarios import error_with_retry_keyboard, reply_result_
 from app.bot.states.scenarios import ReplyMessageStates
 from app.db.repositories import user_repo
 from app.services import ai_service
+from app.services.access_service import decrement_screenshot_balance
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="reply_message")
 logger = logging.getLogger(__name__)
+
+_SCENARIO = "reply_message"
 
 
 def _settings_kwargs(settings) -> dict:
@@ -40,7 +43,7 @@ async def start_reply_scenario(
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    if not await ensure_consent(callback, db_session, user_id, state, "reply_message"):
+    if not await ensure_consent(callback, db_session, user_id, state, _SCENARIO):
         return
     if not await ensure_access(callback, db_session, user_id):
         return
@@ -52,6 +55,8 @@ async def start_reply_scenario(
         "Я: ...\nОна: ...\nЯ: ...\nОна: ..."
     )
 
+
+# ── Photo (compressed) ───────────────────────────────────────────────────────
 
 @router.message(ReplyMessageStates.waiting_input, F.photo)
 async def on_reply_photo(
@@ -68,20 +73,19 @@ async def on_reply_photo(
         await state.set_state(None)
         return
 
-    photo = message.photo[-1]  # best quality
+    photo = message.photo[-1]
     caption_text = message.caption
-
     processing_msg = await message.answer("Анализирую переписку...")
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
-        async with download_telegram_photo(message.bot, photo.file_id) as data:
-            b64 = photo_bytes_to_base64(data)
+        async with download_telegram_photo(message.bot, photo.file_id) as photo_data:
+            b64 = photo_bytes_to_base64(photo_data)
 
         result = await ai_service.generate(
             db_session,
             user_id=user_id,
-            scenario="reply_message",
+            scenario=_SCENARIO,
             input_text=caption_text,
             image_base64=b64,
             image_file_id=photo.file_id,
@@ -90,12 +94,14 @@ async def on_reply_photo(
             **_settings_kwargs(settings),
         )
 
+        # Decrement only on successful AI call
+        await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="photo")
         await _send_reply_result(processing_msg, result, state)
+
     except Exception:
-        logger.exception("reply_message photo failed")
-        # Save retry context: scenario + file_id so we can re-download
+        logger.exception("[%s] photo processing failed for user_id=%s", _SCENARIO, user_id)
         await state.update_data(
-            retry_scenario="reply_message",
+            retry_scenario=_SCENARIO,
             retry_photo_file_id=photo.file_id,
             retry_caption=caption_text,
         )
@@ -105,6 +111,64 @@ async def on_reply_photo(
         )
         await state.set_state(None)
 
+
+# ── Document (image sent without compression) ────────────────────────────────
+
+@router.message(ReplyMessageStates.waiting_input, F.document & F.document.mime_type.startswith("image/"))
+async def on_reply_document(
+    message: types.Message, state: FSMContext, db_session: AsyncSession,
+) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+
+    if not await ensure_access(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    if not await ensure_image_limit(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    doc = message.document
+    caption_text = message.caption
+    processing_msg = await message.answer("Анализирую переписку...")
+
+    try:
+        settings = await user_repo.get_user_settings(db_session, user_id)
+        async with download_telegram_photo(message.bot, doc.file_id) as doc_data:
+            b64 = photo_bytes_to_base64(doc_data)
+
+        result = await ai_service.generate(
+            db_session,
+            user_id=user_id,
+            scenario=_SCENARIO,
+            input_text=caption_text,
+            image_base64=b64,
+            image_file_id=doc.file_id,
+            image_mime_type=doc.mime_type or "image/jpeg",
+            image_size=doc.file_size,
+            **_settings_kwargs(settings),
+        )
+
+        # Decrement only on successful AI call
+        await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="document")
+        await _send_reply_result(processing_msg, result, state)
+
+    except Exception:
+        logger.exception("[%s] document processing failed for user_id=%s", _SCENARIO, user_id)
+        await state.update_data(
+            retry_scenario=_SCENARIO,
+            retry_photo_file_id=doc.file_id,
+            retry_caption=caption_text,
+        )
+        await processing_msg.edit_text(
+            "Произошла ошибка при обработке.",
+            reply_markup=error_with_retry_keyboard(),
+        )
+        await state.set_state(None)
+
+
+# ── Text input ───────────────────────────────────────────────────────────────
 
 @router.message(ReplyMessageStates.waiting_input, F.text)
 async def on_reply_text(
@@ -124,16 +188,16 @@ async def on_reply_text(
         result = await ai_service.generate(
             db_session,
             user_id=user_id,
-            scenario="reply_message",
+            scenario=_SCENARIO,
             input_text=message.text,
             **_settings_kwargs(settings),
         )
 
         await _send_reply_result(processing_msg, result, state)
     except Exception:
-        logger.exception("reply_message text failed")
+        logger.exception("[%s] text processing failed for user_id=%s", _SCENARIO, user_id)
         await state.update_data(
-            retry_scenario="reply_message",
+            retry_scenario=_SCENARIO,
             retry_text=message.text,
             retry_photo_file_id=None,
             retry_caption=None,
@@ -144,6 +208,8 @@ async def on_reply_text(
         )
         await state.set_state(None)
 
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _send_reply_result(
     msg: types.Message, result: dict, state: FSMContext,

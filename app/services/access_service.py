@@ -31,6 +31,7 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     result = await session.execute(stmt)
     access = result.scalar_one_or_none()
     if access is None:
+        logger.debug("[ACCESS] check_access: no UserAccess record for user_id=%s", user_id)
         return AccessStatus.NONE
 
     now = datetime.datetime.now(datetime.UTC)
@@ -42,6 +43,10 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 
     if access.access_status == AccessStatus.PAID:
         if access.paid_until and _is_expired(access.paid_until):
+            logger.info(
+                "[ACCESS] paid subscription expired: user_id=%s paid_until=%s screenshots_before=%d",
+                user_id, access.paid_until.isoformat(), access.screenshots_balance,
+            )
             access.access_status = AccessStatus.EXPIRED
             access.screenshots_balance = 0  # unused screenshots burn on expiry
             await session.flush()
@@ -50,6 +55,10 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 
     if access.access_status == AccessStatus.TRIAL:
         if access.trial_expires_at and _is_expired(access.trial_expires_at):
+            logger.info(
+                "[ACCESS] trial expired: user_id=%s trial_expires_at=%s screenshots_before=%d",
+                user_id, access.trial_expires_at.isoformat(), access.screenshots_balance,
+            )
             access.access_status = AccessStatus.EXPIRED
             access.screenshots_balance = 0  # trial screenshots burn on expiry
             await session.flush()
@@ -65,7 +74,8 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | None:
     """Atomically activate trial for user. Returns None if trial was already used.
 
-    Sets screenshots_balance to the configured trial limit.
+    Sets screenshots_balance to the configured trial limit (trial_image_limit).
+    Trial gives fewer screenshots than a paid subscription to keep them distinct.
     """
     now = datetime.datetime.now(datetime.UTC)
     expires = now + datetime.timedelta(hours=settings.trial.duration_hours)
@@ -77,14 +87,21 @@ async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAcces
     result = await session.execute(stmt)
     access = result.scalar_one_or_none()
     if access is None:
+        logger.debug("[ACCESS] activate_trial: trial already used or no record for user_id=%s", user_id)
         return None
 
+    trial_screenshots = settings.trial_image_limit  # default 100, NOT monthly_image_limit (300)
     access.trial_used = True
     access.trial_started_at = now
     access.trial_expires_at = expires
     access.access_status = AccessStatus.TRIAL
-    access.screenshots_balance = settings.monthly_image_limit
+    access.screenshots_balance = trial_screenshots
     await session.flush()
+
+    logger.info(
+        "[ACCESS] trial activated: user_id=%s expires=%s screenshots=%d",
+        user_id, expires.isoformat(), trial_screenshots,
+    )
     return access
 
 
@@ -97,12 +114,23 @@ async def grant_paid_access(
 ) -> None:
     """Grant paid access to user after successful transaction.
 
-    Resets screenshots_balance to base_screenshots (unused old screenshots burn).
+    IMPORTANT: screenshots_balance is ADDED to (not replaced) so that previously
+    purchased screenshot packs are not lost when renewing a subscription.
+    Screenshots only burn to zero when the subscription period actually expires
+    (handled in check_access).
     """
-    logger.info(
-        "[ACCESS] grant_paid_access: user_id=%s paid_until=%s screenshots=%d payment_id=%s",
-        user_id, paid_until.isoformat(), base_screenshots, payment_id,
+    # Read current balance for before/after logging
+    current_result = await session.execute(
+        select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
     )
+    balance_before = current_result.scalar_one_or_none() or 0
+
+    logger.info(
+        "[ACCESS] grant_paid_access: user_id=%s paid_until=%s +screenshots=%d "
+        "balance_before=%d payment_id=%s",
+        user_id, paid_until.isoformat(), base_screenshots, balance_before, payment_id,
+    )
+
     stmt = (
         update(UserAccess)
         .where(UserAccess.user_id == user_id)
@@ -110,14 +138,18 @@ async def grant_paid_access(
             access_status=AccessStatus.PAID,
             paid_until=paid_until,
             last_successful_payment_id=str(payment_id),
-            screenshots_balance=base_screenshots,
+            # ADD base_screenshots to existing balance (do not reset purchased packs)
+            screenshots_balance=UserAccess.screenshots_balance + base_screenshots,
         )
     )
     result = await session.execute(stmt)
     await session.flush()
+
+    balance_after = balance_before + base_screenshots
     logger.info(
-        "[ACCESS] grant_paid_access complete: rows_updated=%s user_id=%s",
-        result.rowcount, user_id,
+        "[ACCESS] grant_paid_access done: user_id=%s rows_updated=%d "
+        "screenshots_balance: %d → %d paid_until=%s",
+        user_id, result.rowcount, balance_before, balance_after, paid_until.isoformat(),
     )
 
 
@@ -127,24 +159,66 @@ async def add_screenshot_pack(
     screenshots: int,
 ) -> None:
     """Add screenshots to user's balance (screenshot pack purchase)."""
+    # Read current balance for logging
+    current_result = await session.execute(
+        select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
+    )
+    balance_before = current_result.scalar_one_or_none() or 0
+
+    logger.info(
+        "[ACCESS] add_screenshot_pack: user_id=%s +screenshots=%d balance_before=%d",
+        user_id, screenshots, balance_before,
+    )
+
     stmt = (
         update(UserAccess)
         .where(UserAccess.user_id == user_id)
         .values(screenshots_balance=UserAccess.screenshots_balance + screenshots)
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
     await session.flush()
+
+    logger.info(
+        "[ACCESS] add_screenshot_pack done: user_id=%s rows_updated=%d "
+        "screenshots_balance: %d → %d",
+        user_id, result.rowcount, balance_before, balance_before + screenshots,
+    )
 
 
 async def decrement_screenshot_balance(
     session: AsyncSession,
     user_id: uuid.UUID,
+    *,
+    mode: str = "unknown",
+    file_type: str = "unknown",
 ) -> None:
-    """Decrement screenshots_balance by 1 (clamped at 0). Called after a successful image generation."""
+    """Decrement screenshots_balance by 1 (clamped at 0). Called after a successful image generation.
+
+    Args:
+        mode: scenario name (e.g. "profile_review", "first_message")
+        file_type: "photo" or "document"
+    """
+    # Read current balance for before/after logging
+    current_result = await session.execute(
+        select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
+    )
+    balance_before = current_result.scalar_one_or_none() or 0
+
     stmt = (
         update(UserAccess)
         .where(UserAccess.user_id == user_id, UserAccess.screenshots_balance > 0)
         .values(screenshots_balance=UserAccess.screenshots_balance - 1)
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
     await session.flush()
+
+    if result.rowcount > 0:
+        logger.info(
+            "[SCREENSHOT] deducted: user_id=%s mode=%s file_type=%s balance: %d → %d",
+            user_id, mode, file_type, balance_before, balance_before - 1,
+        )
+    else:
+        logger.warning(
+            "[SCREENSHOT] deduct skipped (balance already 0): user_id=%s mode=%s file_type=%s",
+            user_id, mode, file_type,
+        )

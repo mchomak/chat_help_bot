@@ -9,6 +9,7 @@ from aiogram import types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.keyboards.consent import consent_keyboard
 from app.bot.keyboards.menu import PERSISTENT_MENU, main_menu_inline
 from app.bot.keyboards.onboarding import gender_keyboard
 from app.bot.keyboards.payment import payment_menu_keyboard
@@ -18,8 +19,10 @@ from app.bot.keyboards.scenarios import (
     post_generation_keyboard_no_restyle,
 )
 from app.bot.states.onboarding import OnboardingStates
+from app.bot.states.scenarios import ConsentStates
 from app.db.repositories import user_repo
 from app.services.access_service import AccessStatus, activate_trial, check_access, decrement_screenshot_balance
+from app.services.consent_service import has_consent
 
 logger = logging.getLogger(__name__)
 
@@ -48,23 +51,68 @@ async def start_onboarding(message: types.Message, state: FSMContext) -> None:
     await state.set_state(OnboardingStates.gender)
 
 
+async def ensure_consent(
+    event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    state: FSMContext,
+    scenario: str = "",
+) -> bool:
+    """Check that the user has given consent. Redirect to consent form if not.
+
+    Returns True if consent is given, False otherwise.
+    Saves the pending scenario name to FSM state so the consent handler can
+    optionally redirect back after consent is given.
+    """
+    if await has_consent(session, user_id):
+        return True
+
+    logger.info("[CONSENT] user_id=%s has no consent, redirecting from scenario=%s", user_id, scenario)
+
+    if scenario:
+        await state.update_data(pending_scenario=scenario)
+
+    text = (
+        "⚠️ Для использования этой функции необходимо принять условия.\n\n"
+        "Нажмите /start, чтобы ознакомиться с условиями и подтвердить согласие."
+    )
+    if isinstance(event, types.CallbackQuery):
+        await event.answer()
+        await event.message.edit_text(text)
+    else:
+        await event.answer(text)
+
+    await state.set_state(ConsentStates.waiting_consent)
+    return False
+
+
 async def ensure_access(
     event: types.Message | types.CallbackQuery,
     session: AsyncSession,
     user_id: uuid.UUID,
 ) -> bool:
-    """Check access (trial/paid). Auto-activate trial if not yet used. Returns True if access granted."""
+    """Check access (trial/paid). Auto-activate trial if not yet used. Returns True if access granted.
+
+    Trial is normally activated at the end of onboarding (see onboarding.py).
+    This function serves as a fallback for edge cases where the user somehow
+    reaches a feature without trial having been activated yet.
+    """
     status = await check_access(session, user_id)
 
     if status in (AccessStatus.TRIAL, AccessStatus.PAID):
         return True
 
     if status == AccessStatus.NONE:
-        # Activate trial — sets screenshots_balance to monthly_image_limit
+        # Fallback: activate trial (primary activation happens in _finish_onboarding)
+        logger.info("[ACCESS] ensure_access fallback trial activation for user_id=%s", user_id)
         access = await activate_trial(session, user_id)
         if access is not None:
             await session.commit()
-            msg = "⏳ Пробный период активирован — у вас есть 2 часа бесплатного доступа."
+            msg = (
+                f"⏳ Пробный период активирован!\n\n"
+                f"• Доступ: {_format_duration(access.trial_expires_at)}\n"
+                f"• Скриншоты: {access.screenshots_balance} шт."
+            )
             if isinstance(event, types.CallbackQuery):
                 await event.answer(msg, show_alert=True)
             else:
@@ -83,6 +131,24 @@ async def ensure_access(
     return False
 
 
+def _format_duration(expires_at) -> str:
+    """Return human-readable remaining time string."""
+    import datetime
+    if expires_at is None:
+        return "неизвестно"
+    now = datetime.datetime.now(datetime.UTC)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=datetime.UTC)
+    remaining = expires_at - now
+    if remaining.total_seconds() <= 0:
+        return "истёк"
+    hours = int(remaining.total_seconds() // 3600)
+    minutes = int((remaining.total_seconds() % 3600) // 60)
+    if hours > 0:
+        return f"{hours} ч. {minutes} мин."
+    return f"{minutes} мин."
+
+
 async def ensure_image_limit(
     event: types.Message | types.CallbackQuery,
     session: AsyncSession,
@@ -90,7 +156,10 @@ async def ensure_image_limit(
 ) -> bool:
     """Check screenshot balance. Returns True if user has screenshots remaining."""
     access = await user_repo.get_access(session, user_id)
-    if access is not None and access.screenshots_balance > 0:
+    balance = access.screenshots_balance if access else 0
+    logger.debug("[SCREENSHOT] ensure_image_limit: user_id=%s balance=%d", user_id, balance)
+
+    if access is not None and balance > 0:
         return True
 
     text = (
@@ -142,20 +211,26 @@ async def generate_and_send(
     extra_context: str | None = None,
     processing_text: str = "Генерирую...",
     result_header: str = "Варианты:",
+    file_type: str = "photo",
 ) -> None:
     """Universal generation flow: call AI, format result, show post-gen keyboard.
 
     Saves generation context in FSM state for re-generation.
+
+    Args:
+        file_type: "photo" or "document" — used for screenshot deduction logging.
     """
     from app.services import ai_service
 
+    has_image = image_base64 is not None
     logger.info(
-        "generate_and_send: scenario=%s, style=%s, has_text=%s, has_image=%s, user_id=%s",
-        scenario, style, bool(input_text), image_base64 is not None, user_id,
+        "[GEN] generate_and_send: scenario=%s style=%s has_text=%s has_image=%s "
+        "file_type=%s user_id=%s",
+        scenario, style, bool(input_text), has_image, file_type if has_image else "n/a", user_id,
     )
 
     # Check screenshot balance before processing an image
-    if image_base64 is not None:
+    if has_image:
         if not await ensure_image_limit(event, db_session, user_id):
             await state.set_state(None)
             return
@@ -183,24 +258,25 @@ async def generate_and_send(
             **skw,
         )
 
-        # Decrement screenshot balance after a successful AI call with image
-        if image_base64 is not None:
-            await decrement_screenshot_balance(db_session, user_id)
+        # Decrement screenshot balance only after a successful AI call with image
+        if has_image:
+            await decrement_screenshot_balance(
+                db_session, user_id, mode=scenario, file_type=file_type,
+            )
 
         items = result.get("items", [])
         analysis = result.get("analysis", [])
         request_id = result.get("request_id", "")
 
         logger.info(
-            "generate_and_send: result for scenario=%s — items=%d, analysis=%d, request_id=%s",
-            scenario, len(items), len(analysis), request_id,
+            "[GEN] result: scenario=%s items=%d analysis=%d request_id=%s user_id=%s",
+            scenario, len(items), len(analysis), request_id, user_id,
         )
 
         if not items:
             logger.warning(
-                "generate_and_send: empty items for scenario=%s, "
-                "result_keys=%s, request_id=%s",
-                scenario, list(result.keys()), request_id,
+                "[GEN] empty items: scenario=%s result_keys=%s request_id=%s user_id=%s",
+                scenario, list(result.keys()), request_id, user_id,
             )
             await processing_msg.edit_text(
                 "Не получилось сгенерировать варианты — попробуйте ещё раз.",
@@ -242,7 +318,7 @@ async def generate_and_send(
         await processing_msg.edit_text(result_text, reply_markup=keyboard)
 
     except Exception:
-        logger.exception("Generation failed for scenario=%s", scenario)
+        logger.exception("[GEN] generation failed: scenario=%s user_id=%s", scenario, user_id)
         await state.update_data(
             retry_scenario=scenario,
             retry_style=style,
