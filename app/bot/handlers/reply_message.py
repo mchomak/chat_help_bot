@@ -94,8 +94,10 @@ async def on_reply_photo(
             **_settings_kwargs(settings),
         )
 
-        # Decrement only on successful AI call
+        # Decrement only on successful AI call, then commit immediately
         await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="photo")
+        await db_session.commit()
+        logger.debug("[SCREENSHOT] commit done: session_id=%d user_id=%s scenario=%s", id(db_session), user_id, _SCENARIO)
         await _send_reply_result(processing_msg, result, state)
 
     except Exception:
@@ -150,8 +152,10 @@ async def on_reply_document(
             **_settings_kwargs(settings),
         )
 
-        # Decrement only on successful AI call
+        # Decrement only on successful AI call, then commit immediately
         await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="document")
+        await db_session.commit()
+        logger.debug("[SCREENSHOT] commit done: session_id=%d user_id=%s scenario=%s", id(db_session), user_id, _SCENARIO)
         await _send_reply_result(processing_msg, result, state)
 
     except Exception:
