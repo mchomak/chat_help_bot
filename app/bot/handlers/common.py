@@ -263,6 +263,14 @@ async def generate_and_send(
             await decrement_screenshot_balance(
                 db_session, user_id, mode=scenario, file_type=file_type,
             )
+            # CRITICAL: must commit here.
+            # DbSessionMiddleware calls session.close() (not commit) on handler exit,
+            # which rolls back any uncommitted transaction — flush() alone is not enough.
+            await db_session.commit()
+            logger.debug(
+                "[SCREENSHOT] commit done: session_id=%d user_id=%s scenario=%s",
+                id(db_session), user_id, scenario,
+            )
 
         items = result.get("items", [])
         analysis = result.get("analysis", [])
