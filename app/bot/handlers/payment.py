@@ -53,8 +53,14 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
             now = datetime.datetime.now(datetime.UTC)
             remaining = access.trial_expires_at - now
             if remaining.total_seconds() > 0:
-                minutes = int(remaining.total_seconds() // 60)
-                lines.append(f"Осталось времени: {minutes} мин.")
+                total_minutes = int(remaining.total_seconds() // 60)
+                hours, mins = divmod(total_minutes, 60)
+                if hours > 0:
+                    lines.append(f"Осталось времени: {hours} ч {mins} мин")
+                else:
+                    lines.append(f"Осталось времени: {mins} мин")
+            if access:
+                lines.append(f"Скриншотов осталось: {access.screenshots_balance}")
 
     if status == AccessStatus.PAID:
         access = await user_repo.get_access(db_session, user_id)
@@ -318,4 +324,23 @@ async def check_payment_status(
     user_id = uuid.UUID(data["user_id"])
     status = await check_access(db_session, user_id)
     label = ACCESS_LABELS.get(status, status)
-    await callback.answer(f"Статус: {label}", show_alert=True)
+    parts = [f"Статус: {label}"]
+
+    if status in (AccessStatus.TRIAL, AccessStatus.PAID):
+        access = await user_repo.get_access(db_session, user_id)
+        if access:
+            if status == AccessStatus.TRIAL and access.trial_expires_at:
+                now = datetime.datetime.now(datetime.UTC)
+                remaining = access.trial_expires_at - now
+                if remaining.total_seconds() > 0:
+                    total_minutes = int(remaining.total_seconds() // 60)
+                    hours, mins = divmod(total_minutes, 60)
+                    if hours > 0:
+                        parts.append(f"Осталось времени: {hours} ч {mins} мин")
+                    else:
+                        parts.append(f"Осталось времени: {mins} мин")
+            if status == AccessStatus.PAID and access.paid_until:
+                parts.append(f"Подписка до: {access.paid_until.strftime('%d.%m.%Y')}")
+            parts.append(f"Скриншотов осталось: {access.screenshots_balance}")
+
+    await callback.answer("\n".join(parts), show_alert=True)
