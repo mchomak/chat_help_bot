@@ -349,6 +349,9 @@ async def _maybe_grant_referral_bonus(
 
     Idempotency is ensured at the payment level via Payment.goods_granted — this function
     is only ever called once per payment.
+
+    NOTE: grant_paid_access now ADDS screenshots (not replaces), so we pass only
+    bonus_screenshots here — the referrer's existing balance is preserved automatically.
     """
     payer = await user_repo.get_user_by_id(session, payer_user_id)
     if payer is None or payer.referred_by_telegram_id is None:
@@ -383,15 +386,25 @@ async def _maybe_grant_referral_bonus(
 
     new_paid_until = base + datetime.timedelta(days=bonus_days)
     logger.info(
-        "[REFERRAL] granting bonus to referrer tg_id=%s: +%d days +%d screenshots "
-        "new_paid_until=%s (payment=%s)",
-        payer.referred_by_telegram_id, bonus_days, bonus_screenshots,
-        new_paid_until.isoformat(), payment_id,
+        "[REFERRAL] granting bonus to referrer tg_id=%s (id=%s): +%d days +%d screenshots "
+        "new_paid_until=%s referrer_balance_before=%d (payment=%s)",
+        payer.referred_by_telegram_id, referrer.id, bonus_days, bonus_screenshots,
+        new_paid_until.isoformat(), referrer_access.screenshots_balance, payment_id,
     )
+    # Pass only bonus_screenshots — grant_paid_access ADDs to existing balance, not replaces
     await grant_paid_access(
         session, referrer.id, new_paid_until, payment_id,
-        base_screenshots=referrer_access.screenshots_balance + bonus_screenshots,
+        base_screenshots=bonus_screenshots,
     )
+
+    # Mark on the payer's access record that their referral bonus was successfully granted
+    payer_access = (
+        await session.execute(select(UserAccess).where(UserAccess.user_id == payer_user_id))
+    ).scalar_one_or_none()
+    if payer_access and not payer_access.referral_bonus_granted:
+        payer_access.referral_bonus_granted = True
+        logger.debug("[REFERRAL] referral_bonus_granted set for payer user_id=%s", payer_user_id)
+
     await session.flush()
 
     return {

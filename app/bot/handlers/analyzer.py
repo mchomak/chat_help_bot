@@ -95,6 +95,41 @@ async def on_analyzer_photo(
         image_size=photo.file_size,
         processing_text="🔍 Анализирую переписку...",
         result_header="💬 Варианты ответа:",
+        file_type="photo",
+    )
+
+
+@router.message(AnalyzerStates.waiting_input, F.document & F.document.mime_type.startswith("image/"))
+async def on_analyzer_document(
+    message: types.Message, state: FSMContext, db_session: AsyncSession,
+) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+
+    if not await ensure_access(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    doc = message.document
+    caption_text = message.caption
+    style = data.get("chosen_style")
+
+    async with download_telegram_photo(message.bot, doc.file_id) as doc_data:
+        b64 = photo_bytes_to_base64(doc_data)
+
+    await generate_and_send(
+        message, state, db_session,
+        user_id=user_id,
+        scenario="analyzer",
+        style=style,
+        input_text=caption_text,
+        image_base64=b64,
+        image_file_id=doc.file_id,
+        image_mime_type=doc.mime_type or "image/jpeg",
+        image_size=doc.file_size,
+        processing_text="🔍 Анализирую переписку...",
+        result_header="💬 Варианты ответа:",
+        file_type="document",
     )
 
 

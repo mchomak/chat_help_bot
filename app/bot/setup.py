@@ -20,6 +20,8 @@ from app.bot.handlers import (
     onboarding,
     payment,
     photo_pickup,
+    profile_review,
+    reply_message,
     settings_handler,
     start,
 )
@@ -63,6 +65,8 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(analyzer.router)
     dp.include_router(anti_ignor.router)
     dp.include_router(photo_pickup.router)
+    dp.include_router(profile_review.router)
+    dp.include_router(reply_message.router)
     dp.include_router(modifier.router)  # Must be last — handles generic postgen callbacks
 
     return dp

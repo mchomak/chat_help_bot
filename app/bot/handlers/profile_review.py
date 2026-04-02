@@ -14,10 +14,13 @@ from app.bot.keyboards.scenarios import error_with_retry_keyboard, profile_resul
 from app.bot.states.scenarios import ProfileReviewStates
 from app.db.repositories import user_repo
 from app.services import ai_service
+from app.services.access_service import decrement_screenshot_balance
 from app.services.image_service import download_telegram_photo, photo_bytes_to_base64
 
 router = Router(name="profile_review")
 logger = logging.getLogger(__name__)
+
+_SCENARIO = "profile_review"
 
 
 def _settings_kwargs(settings) -> dict:
@@ -39,7 +42,7 @@ async def start_profile_review(
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
 
-    if not await ensure_consent(callback, db_session, user_id, state, "profile_review"):
+    if not await ensure_consent(callback, db_session, user_id, state, _SCENARIO):
         return
     if not await ensure_access(callback, db_session, user_id):
         return
@@ -51,6 +54,8 @@ async def start_profile_review(
         "Можно отправить и то, и другое."
     )
 
+
+# ── Photo (compressed) ───────────────────────────────────────────────────────
 
 @router.message(ProfileReviewStates.waiting_input, F.photo)
 async def on_profile_photo(
@@ -73,13 +78,13 @@ async def on_profile_photo(
 
     try:
         settings = await user_repo.get_user_settings(db_session, user_id)
-        async with download_telegram_photo(message.bot, photo.file_id) as data:
-            b64 = photo_bytes_to_base64(data)
+        async with download_telegram_photo(message.bot, photo.file_id) as photo_data:
+            b64 = photo_bytes_to_base64(photo_data)
 
         result = await ai_service.generate(
             db_session,
             user_id=user_id,
-            scenario="profile_review",
+            scenario=_SCENARIO,
             input_text=caption_text,
             image_base64=b64,
             image_file_id=photo.file_id,
@@ -87,11 +92,15 @@ async def on_profile_photo(
             image_size=photo.file_size,
             **_settings_kwargs(settings),
         )
+
+        # Decrement only on successful AI call
+        await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="photo")
         await _send_profile_result(processing_msg, result, state)
+
     except Exception:
-        logger.exception("profile_review photo failed")
+        logger.exception("[%s] photo processing failed for user_id=%s", _SCENARIO, user_id)
         await state.update_data(
-            retry_scenario="profile_review",
+            retry_scenario=_SCENARIO,
             retry_photo_file_id=photo.file_id,
             retry_caption=caption_text,
         )
@@ -101,6 +110,64 @@ async def on_profile_photo(
         )
         await state.set_state(None)
 
+
+# ── Document (image sent without compression) ────────────────────────────────
+
+@router.message(ProfileReviewStates.waiting_input, F.document & F.document.mime_type.startswith("image/"))
+async def on_profile_document(
+    message: types.Message, state: FSMContext, db_session: AsyncSession,
+) -> None:
+    data = await state.get_data()
+    user_id = uuid.UUID(data["user_id"])
+
+    if not await ensure_access(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    if not await ensure_image_limit(message, db_session, user_id):
+        await state.set_state(None)
+        return
+
+    doc = message.document
+    caption_text = message.caption
+    processing_msg = await message.answer("🔍 Анализирую ваш профиль...")
+
+    try:
+        settings = await user_repo.get_user_settings(db_session, user_id)
+        async with download_telegram_photo(message.bot, doc.file_id) as doc_data:
+            b64 = photo_bytes_to_base64(doc_data)
+
+        result = await ai_service.generate(
+            db_session,
+            user_id=user_id,
+            scenario=_SCENARIO,
+            input_text=caption_text,
+            image_base64=b64,
+            image_file_id=doc.file_id,
+            image_mime_type=doc.mime_type or "image/jpeg",
+            image_size=doc.file_size,
+            **_settings_kwargs(settings),
+        )
+
+        # Decrement only on successful AI call
+        await decrement_screenshot_balance(db_session, user_id, mode=_SCENARIO, file_type="document")
+        await _send_profile_result(processing_msg, result, state)
+
+    except Exception:
+        logger.exception("[%s] document processing failed for user_id=%s", _SCENARIO, user_id)
+        await state.update_data(
+            retry_scenario=_SCENARIO,
+            retry_photo_file_id=doc.file_id,
+            retry_caption=caption_text,
+        )
+        await processing_msg.edit_text(
+            "Что-то пошло не так. Попробуйте ещё раз.",
+            reply_markup=error_with_retry_keyboard(),
+        )
+        await state.set_state(None)
+
+
+# ── Text input ───────────────────────────────────────────────────────────────
 
 @router.message(ProfileReviewStates.waiting_input, F.text)
 async def on_profile_text(
@@ -120,15 +187,15 @@ async def on_profile_text(
         result = await ai_service.generate(
             db_session,
             user_id=user_id,
-            scenario="profile_review",
+            scenario=_SCENARIO,
             input_text=message.text,
             **_settings_kwargs(settings),
         )
         await _send_profile_result(processing_msg, result, state)
     except Exception:
-        logger.exception("profile_review text failed")
+        logger.exception("[%s] text processing failed for user_id=%s", _SCENARIO, user_id)
         await state.update_data(
-            retry_scenario="profile_review",
+            retry_scenario=_SCENARIO,
             retry_text=message.text,
             retry_photo_file_id=None,
             retry_caption=None,
@@ -139,6 +206,8 @@ async def on_profile_text(
         )
         await state.set_state(None)
 
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _format_profile_review(result: dict) -> str:
     """Format structured profile review into readable text."""
