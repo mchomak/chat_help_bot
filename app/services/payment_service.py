@@ -17,7 +17,7 @@ from app.db.models.payment import Payment, PaymentStatus
 from app.db.models.user import UserAccess
 from app.db.repositories import payment_repo, user_repo
 from app.services import yookassa_service
-from app.services.access_service import add_screenshot_pack, grant_paid_access
+from app.services.access_service import AccessStatus, add_screenshot_pack, grant_paid_access
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,10 @@ async def _grant_goods(session: AsyncSession, payment: Payment) -> GrantResult:
             await session.execute(select(UserAccess).where(UserAccess.user_id == user_id))
         ).scalar_one_or_none()
 
-        if access and access.paid_until:
+        # Determine if user is currently on trial (not yet a paid subscriber)
+        is_trial_transition = access is not None and access.access_status == AccessStatus.TRIAL
+
+        if access and access.paid_until and not is_trial_transition:
             current_until = access.paid_until
             if current_until.tzinfo is None:
                 current_until = current_until.replace(tzinfo=datetime.UTC)
@@ -312,18 +315,24 @@ async def _grant_goods(session: AsyncSession, payment: Payment) -> GrantResult:
             )
         else:
             base = now
-            logger.debug("[GRANT] payment %s: no active subscription — starting from now",
-                         payment.id)
+            if is_trial_transition:
+                logger.debug("[GRANT] payment %s: trial → paid transition, starting from now",
+                             payment.id)
+            else:
+                logger.debug("[GRANT] payment %s: no active subscription — starting from now",
+                             payment.id)
 
         paid_until = base + datetime.timedelta(days=plan.days)
         logger.info(
-            "[GRANT] tariff: user_id=%s plan=%s days=%d paid_until=%s screenshots=%d payment=%s",
+            "[GRANT] tariff: user_id=%s plan=%s days=%d paid_until=%s screenshots=%d "
+            "is_trial_transition=%s payment=%s",
             user_id, plan.key, plan.days, paid_until.isoformat(),
-            plan.base_screenshots, payment.id,
+            plan.base_screenshots, is_trial_transition, payment.id,
         )
         await grant_paid_access(
             session, user_id, paid_until, payment.id,
             base_screenshots=plan.base_screenshots,
+            replace_screenshots=is_trial_transition,
         )
         referral_result = await _maybe_grant_referral_bonus(session, user_id, payment.id)
         logger.debug("[GRANT] referral result for payment %s: %s", payment.id, referral_result)

@@ -111,6 +111,7 @@ async def grant_paid_access(
     paid_until: datetime.datetime,
     payment_id: uuid.UUID,
     base_screenshots: int = 0,
+    replace_screenshots: bool = False,
 ) -> None:
     """Grant paid access to user after successful transaction.
 
@@ -118,6 +119,9 @@ async def grant_paid_access(
     purchased screenshot packs are not lost when renewing a subscription.
     Screenshots only burn to zero when the subscription period actually expires
     (handled in check_access).
+
+    replace_screenshots=True is used when transitioning from trial to a paid
+    subscription so that trial screenshots are not summed with the paid plan.
     """
     # Read current balance for before/after logging
     current_result = await session.execute(
@@ -127,9 +131,12 @@ async def grant_paid_access(
 
     logger.info(
         "[ACCESS] grant_paid_access: user_id=%s paid_until=%s +screenshots=%d "
-        "balance_before=%d payment_id=%s",
-        user_id, paid_until.isoformat(), base_screenshots, balance_before, payment_id,
+        "replace_screenshots=%s balance_before=%d payment_id=%s",
+        user_id, paid_until.isoformat(), base_screenshots,
+        replace_screenshots, balance_before, payment_id,
     )
+
+    new_balance = base_screenshots if replace_screenshots else UserAccess.screenshots_balance + base_screenshots
 
     stmt = (
         update(UserAccess)
@@ -138,14 +145,13 @@ async def grant_paid_access(
             access_status=AccessStatus.PAID,
             paid_until=paid_until,
             last_successful_payment_id=str(payment_id),
-            # ADD base_screenshots to existing balance (do not reset purchased packs)
-            screenshots_balance=UserAccess.screenshots_balance + base_screenshots,
+            screenshots_balance=new_balance,
         )
     )
     result = await session.execute(stmt)
     await session.flush()
 
-    balance_after = balance_before + base_screenshots
+    balance_after = base_screenshots if replace_screenshots else balance_before + base_screenshots
     logger.info(
         "[ACCESS] grant_paid_access done: user_id=%s rows_updated=%d "
         "screenshots_balance: %d → %d paid_until=%s",
