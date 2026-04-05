@@ -117,6 +117,9 @@ class AppConfig:
     referral_reward_screenshots: int = field(
         default_factory=lambda: _env_int("REFERRAL_REWARD_SCREENSHOTS", 150),
     )
+    # Support links (shown in help and payment error messages)
+    support_channel_url: str = field(default_factory=lambda: _env("SUPPORT_CHANNEL_URL", ""))
+    support_chat_url: str = field(default_factory=lambda: _env("SUPPORT_CHAT_URL", ""))
 
 
 settings = AppConfig()

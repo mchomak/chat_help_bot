@@ -59,3 +59,21 @@ def payment_error_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="В меню", callback_data="back:menu")],
         ],
     )
+
+
+def payment_error_with_support_keyboard() -> InlineKeyboardMarkup:
+    """Error keyboard for payment processing failures — includes support links."""
+    from app.config import settings
+
+    rows = [
+        [InlineKeyboardButton(text="Попробовать снова", callback_data="menu:payment")],
+    ]
+    support_row = []
+    if settings.support_channel_url:
+        support_row.append(InlineKeyboardButton(text="Канал ТП", url=settings.support_channel_url))
+    if settings.support_chat_url:
+        support_row.append(InlineKeyboardButton(text="Чат ТП", url=settings.support_chat_url))
+    if support_row:
+        rows.append(support_row)
+    rows.append([InlineKeyboardButton(text="В меню", callback_data="back:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
