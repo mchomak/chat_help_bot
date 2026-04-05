@@ -8,6 +8,7 @@ import uuid
 
 from aiogram import F, Router, types
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app import tariffs_config
 from app.bot.keyboards.payment import (
     pack_selection_keyboard,
     payment_error_keyboard,
+    payment_error_with_support_keyboard,
     payment_menu_keyboard,
     payment_pending_keyboard,
     tariff_selection_keyboard,
@@ -25,7 +27,7 @@ from app.db.repositories import payment_repo, user_repo
 from app.db.models.payment import PaymentStatus
 from app.services.access_service import AccessStatus, check_access
 from app.services.payment_service import create_and_initiate_payment, poll_and_process_payment
-from aiogram.enums import ParseMode
+
 router = Router(name="payment")
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,8 @@ ACCESS_LABELS = {
 
 @router.callback_query(F.data.in_({"menu:payment", "menu:subscription"}))
 async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+    await callback.answer()
+
     data = await state.get_data()
     user_id = uuid.UUID(data["user_id"])
     status = await check_access(db_session, user_id)
@@ -72,7 +76,6 @@ async def show_payment(callback: types.CallbackQuery, state: FSMContext, db_sess
     if status in (AccessStatus.EXPIRED, AccessStatus.NONE):
         lines.append("\nЧтобы продолжить — оформите подписку.")
 
-    await callback.answer()
     await callback.message.edit_text("\n".join(lines), reply_markup=payment_menu_keyboard())
 
 
@@ -289,10 +292,32 @@ async def poll_payment(
         await callback.answer("Неверный ID платежа.")
         return
 
-    await callback.answer("Проверяем статус...")
+    # Answer the callback immediately to acknowledge the click.
+    # If the query already expired (>30 s in the update queue), catch the error
+    # and continue — the payment operation must still run to credit the user.
+    try:
+        await callback.answer("Проверяем статус...")
+    except TelegramBadRequest as e:
+        logger.warning(
+            "[POLL] Callback query expired before answer for payment_id=%s: %s",
+            payment_id_str, e,
+        )
 
-    new_status = await poll_and_process_payment(db_session, callback.bot, payment_id)
-    await db_session.commit()
+    logger.info("[POLL] User-initiated status check for payment_id=%s", payment_id_str)
+
+    try:
+        new_status = await poll_and_process_payment(db_session, callback.bot, payment_id)
+        await db_session.commit()
+        logger.info("[POLL] Commit done for payment_id=%s new_status=%s", payment_id, new_status)
+    except Exception:
+        logger.exception("[POLL] Failed to process payment_id=%s", payment_id)
+        await callback.message.answer(
+            "⚠️ При обработке платежа возникла ошибка.\n\n"
+            "Если деньги уже списались, но скриншоты не начислились — обратитесь в поддержку. "
+            "Поддержка поможет разобраться с платежом вручную.",
+            reply_markup=payment_error_with_support_keyboard(),
+        )
+        return
 
     if new_status == PaymentStatus.SUCCEEDED:
         await callback.message.edit_text(
@@ -307,11 +332,21 @@ async def poll_payment(
     elif new_status == PaymentStatus.WAITING_FOR_PAYMENT:
         payment = await payment_repo.get_payment(db_session, payment_id)
         if payment and payment.payment_url:
-            await callback.answer("Оплата ещё не поступила.", show_alert=True)
+            await callback.message.edit_text(
+                "⏳ Оплата ещё не поступила. Завершите оплату по ссылке выше.",
+                reply_markup=payment_pending_keyboard(payment.payment_url, payment_id_str),
+            )
         else:
-            await callback.answer("Ожидаем оплату...", show_alert=True)
+            await callback.message.edit_text(
+                "⏳ Ожидаем поступления оплаты...",
+                reply_markup=back_to_menu_keyboard(),
+            )
     else:
-        await callback.answer(f"Статус: {new_status}", show_alert=True)
+        logger.warning("[POLL] Unexpected status %s for payment_id=%s", new_status, payment_id)
+        await callback.message.edit_text(
+            f"⚠️ Статус платежа: {new_status}. Если есть вопросы — обратитесь в поддержку.",
+            reply_markup=back_to_menu_keyboard(),
+        )
 
 
 # ── General status check ─────────────────────────────────────────────────────

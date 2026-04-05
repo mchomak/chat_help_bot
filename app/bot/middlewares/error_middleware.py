@@ -6,6 +6,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,12 +46,24 @@ class ErrorLoggingMiddleware(BaseMiddleware):
                 except Exception:
                     logger.exception("Failed to log error to DB")
 
-            # Friendly error to user
+            # Friendly error to user.
+            # For CallbackQuery: do NOT use callback.answer() — it may have already been
+            # called earlier in the handler (Telegram only allows answering once), or the
+            # query may have expired. Use message.answer() to send a new message instead.
             error_text = "Произошла внутренняя ошибка. Попробуйте позже или напишите /menu."
             try:
                 if isinstance(event, Message):
                     await event.answer(error_text)
                 elif isinstance(event, CallbackQuery):
-                    await event.answer(error_text, show_alert=True)
+                    if event.message:
+                        await event.message.answer(error_text)
+                    else:
+                        # Fallback: try callback.answer — may fail if already answered/expired
+                        try:
+                            await event.answer(error_text, show_alert=True)
+                        except TelegramBadRequest:
+                            logger.warning(
+                                "Cannot send error to user: callback query already answered or expired"
+                            )
             except Exception:
                 logger.exception("Failed to send error message to user")

@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.keyboards.scenarios import back_to_menu_keyboard
+from app.config import settings
 
 router = Router(name="help")
 
@@ -32,21 +33,15 @@ HELP_TEXT = (
 def help_keyboard() -> InlineKeyboardMarkup:
     base_keyboard = back_to_menu_keyboard()
 
-    support_buttons = [
-        [
-            InlineKeyboardButton(
-                text="Канал ТП",
-                url="https://t.me/chat_help_24",
-            ),
-            InlineKeyboardButton(
-                text="Чат ТП",
-                url="https://t.me/heelp24",
-            ),
-        ]
-    ]
+    support_row = []
+    if settings.support_channel_url:
+        support_row.append(InlineKeyboardButton(text="Канал ТП", url=settings.support_channel_url))
+    if settings.support_chat_url:
+        support_row.append(InlineKeyboardButton(text="Чат ТП", url=settings.support_chat_url))
 
+    extra = [support_row] if support_row else []
     return InlineKeyboardMarkup(
-        inline_keyboard=[*base_keyboard.inline_keyboard, *support_buttons]
+        inline_keyboard=[*base_keyboard.inline_keyboard, *extra]
     )
 
 
