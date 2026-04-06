@@ -10,6 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# ── Trial period configuration ───────────────────────────────────────────────
+# Business rules for the free trial. Keep here alongside tariff/pack config.
+
+TRIAL_DURATION_HOURS: int = 2   # How long the free trial lasts
+TRIAL_SCREENSHOTS: int = 100    # Screenshots given at trial activation
+
+
 @dataclass(frozen=True)
 class TariffPlan:
     key: str
