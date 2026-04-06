@@ -37,17 +37,17 @@ class ScreenshotPack:
 # ── Subscription plans ──────────────────────────────────────────────────────
 
 TARIFFS: dict[str, TariffPlan] = {
-    "week":    TariffPlan("week",    "1 неделя",   200.0,   7, 100),
-    "month":   TariffPlan("month",   "1 месяц",    500.0,  30, 300),
-    "quarter": TariffPlan("quarter", "3 месяца",  1000.0,  90, 900),
+    "week":    TariffPlan("week",    "1 неделя",   20.0,   7, 100),
+    "month":   TariffPlan("month",   "1 месяц",    30.0,  30, 300),
+    "quarter": TariffPlan("quarter", "3 месяца",  40.0,  90, 900),
 }
 
 # ── Screenshot add-on packs ─────────────────────────────────────────────────
 
 PACKS: dict[str, ScreenshotPack] = {
-    "s": ScreenshotPack("s", "300 скриншотов",   500.0,   300),
-    "m": ScreenshotPack("m", "1 000 скриншотов", 1000.0, 1000),
-    "l": ScreenshotPack("l", "5 000 скриншотов", 4000.0, 5000),
+    "s": ScreenshotPack("s", "300 скриншотов",    20.0,   300),
+    "m": ScreenshotPack("m", "1 000 скриншотов", 30.0, 1000),
+    "l": ScreenshotPack("l", "5 000 скриншотов", 40.0, 5000),
 }
 
 
