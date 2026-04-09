@@ -17,7 +17,7 @@ from app.db.models.payment import Payment, PaymentStatus
 from app.db.models.user import UserAccess
 from app.db.repositories import payment_repo, user_repo
 from app.services import yookassa_service
-from app.services.access_service import add_screenshot_pack, grant_paid_access
+from app.services.access_service import AccessStatus, add_screenshot_pack, grant_paid_access
 
 logger = logging.getLogger(__name__)
 
@@ -171,10 +171,17 @@ async def poll_and_process_payment(
                        payment.id, exc)
         return payment.status
 
-    logger.info("[POLL] YooKassa returned status=%s for payment %s (DB status=%s)",
-                yk_status, payment.id, payment.status)
+    logger.info(
+        "[POLL] YooKassa status=%s for payment_id=%s (DB status=%s goods_granted=%s)",
+        yk_status, payment.id, payment.status, payment.goods_granted,
+    )
 
     await _apply_yookassa_status(session, bot, payment, yk_status)
+    logger.info(
+        "[POLL] after _apply_yookassa_status: payment_id=%s status=%s goods_granted=%s "
+        "(commit pending in handler)",
+        payment.id, payment.status, payment.goods_granted,
+    )
     return payment.status
 
 
@@ -259,12 +266,17 @@ async def _apply_yookassa_status(
         # Solution: set payment.status ONLY after _grant_goods succeeds.
         # If _grant_goods raises, payment.status stays as waiting_for_payment,
         # and the user can safely retry by clicking "Проверить статус" again.
+        logger.info(
+            "[APPLY] granting goods for payment_id=%s user_id=%s type=%s key=%s yk_id=%s",
+            payment.id, payment.user_id, payment.purchase_type,
+            payment.purchase_key, payment.yookassa_payment_id,
+        )
         try:
             grant_result = await _grant_goods(session, payment)
         except Exception:
             logger.exception(
-                "[APPLY] _grant_goods failed for payment %s (user_id=%s type=%s key=%s) — "
-                "payment.status NOT updated; user can retry",
+                "[APPLY] _grant_goods FAILED for payment_id=%s user_id=%s type=%s key=%s — "
+                "payment.status NOT updated to succeeded; user can retry",
                 payment.id, payment.user_id, payment.purchase_type, payment.purchase_key,
             )
             raise
@@ -273,7 +285,7 @@ async def _apply_yookassa_status(
         payment.status = new_status  # Set AFTER successful grant
         await session.flush()
         logger.info(
-            "[APPLY] goods granted, status set to %s for payment %s (user_id=%s)",
+            "[APPLY] goods_granted=True status=%s flushed for payment_id=%s user_id=%s",
             new_status, payment.id, payment.user_id,
         )
         await _send_success_notification(bot, payment, grant_result)
@@ -296,47 +308,146 @@ async def _grant_goods(session: AsyncSession, payment: Payment) -> GrantResult:
         plan = tariffs_config.get_tariff(payment.purchase_key)
         now = datetime.datetime.now(datetime.UTC)
 
-        # Extend from current paid_until if subscription is still active; otherwise start from now
         access = (
             await session.execute(select(UserAccess).where(UserAccess.user_id == user_id))
         ).scalar_one_or_none()
 
-        if access and access.paid_until:
-            current_until = access.paid_until
+        db_status = access.access_status if access else "NO_RECORD"
+        db_paid_until = access.paid_until if access else None
+        db_trial_expires = access.trial_expires_at if access else None
+        db_screenshots = access.screenshots_balance if access else 0
+
+        # User is on trial if that's what the DB shows (check_access may not have been called
+        # in this session, so the DB value is the ground truth here).
+        is_trial_transition = access is not None and access.access_status == AccessStatus.TRIAL
+
+        logger.info(
+            "[GRANT TARIFF] START user_id=%s payment_id=%s yk_id=%s "
+            "plan=%s days=%d plan_screenshots=%d | "
+            "db_status=%s db_paid_until=%s db_trial_expires=%s db_screenshots=%d "
+            "is_trial_transition=%s",
+            user_id, payment.id, payment.yookassa_payment_id,
+            plan.key, plan.days, plan.base_screenshots,
+            db_status,
+            db_paid_until.isoformat() if db_paid_until else None,
+            db_trial_expires.isoformat() if db_trial_expires else None,
+            db_screenshots, is_trial_transition,
+        )
+
+        # Determine base date for paid_until and whether to replace or add screenshots.
+        #
+        # Four distinct cases:
+        #   1. trial_transition   — replace trial screenshots with plan screenshots
+        #   2. active_renewal     — extend paid_until, ADD plan screenshots to balance
+        #   3. expired_renewal    — start fresh; also REPLACE because old screenshots
+        #                          must be zeroed (check_access may not have been called
+        #                          since expiry, so balance might still be > 0)
+        #   4. fresh_paid         — first ever paid subscription; REPLACE (balance is 0
+        #                          or whatever trial left, both handled by replacement)
+
+        if is_trial_transition:
+            # Case 1: trial → paid
+            base = now
+            replace_screenshots = True
+            grant_mode = "trial_to_paid"
+            logger.info(
+                "[GRANT TARIFF] mode=trial_to_paid base=%s | "
+                "trial screenshots (%d) will be replaced with plan's %d",
+                base.isoformat(), db_screenshots, plan.base_screenshots,
+            )
+
+        elif access is not None and db_paid_until is not None:
+            current_until = db_paid_until
             if current_until.tzinfo is None:
                 current_until = current_until.replace(tzinfo=datetime.UTC)
-            base = current_until if current_until > now else now
-            logger.debug(
-                "[GRANT] payment %s: extending from %s (active=%s)",
-                payment.id, current_until.isoformat(), current_until > now,
-            )
+            is_active = current_until > now
+
+            if is_active:
+                # Case 2: active paid subscription renewal — extend, accumulate screenshots
+                base = current_until
+                replace_screenshots = False
+                grant_mode = "active_renewal"
+                logger.info(
+                    "[GRANT TARIFF] mode=active_renewal "
+                    "extending from current paid_until=%s | "
+                    "adding %d to existing %d paid screenshots",
+                    current_until.isoformat(), plan.base_screenshots, db_screenshots,
+                )
+            else:
+                # Case 3: expired paid subscription — start fresh, reset screenshots.
+                # check_access may not have been called since expiry, so balance could
+                # still be non-zero; we reset it here to avoid carrying over stale screenshots.
+                base = now
+                replace_screenshots = True
+                grant_mode = "expired_renewal"
+                logger.info(
+                    "[GRANT TARIFF] mode=expired_renewal "
+                    "subscription expired at %s — starting from now | "
+                    "replacing stale %d screenshots with plan's %d",
+                    current_until.isoformat(), db_screenshots, plan.base_screenshots,
+                )
+
         else:
+            # Case 4: fresh paid subscription (no prior paid sub)
             base = now
-            logger.debug("[GRANT] payment %s: no active subscription — starting from now",
-                         payment.id)
+            replace_screenshots = True
+            grant_mode = "fresh_paid"
+            logger.info(
+                "[GRANT TARIFF] mode=fresh_paid base=%s | screenshots will be %d",
+                base.isoformat(), plan.base_screenshots,
+            )
 
         paid_until = base + datetime.timedelta(days=plan.days)
-        logger.info(
-            "[GRANT] tariff: user_id=%s plan=%s days=%d paid_until=%s screenshots=%d payment=%s",
-            user_id, plan.key, plan.days, paid_until.isoformat(),
-            plan.base_screenshots, payment.id,
+        expected_balance_after = (
+            plan.base_screenshots if replace_screenshots
+            else db_screenshots + plan.base_screenshots
         )
+        logger.info(
+            "[GRANT TARIFF] computed: mode=%s base=%s + %d days → paid_until=%s | "
+            "screenshots: %d → %d (replace=%s)",
+            grant_mode, base.isoformat(), plan.days, paid_until.isoformat(),
+            db_screenshots, expected_balance_after, replace_screenshots,
+        )
+
         await grant_paid_access(
             session, user_id, paid_until, payment.id,
             base_screenshots=plan.base_screenshots,
+            replace_screenshots=replace_screenshots,
         )
         referral_result = await _maybe_grant_referral_bonus(session, user_id, payment.id)
-        logger.debug("[GRANT] referral result for payment %s: %s", payment.id, referral_result)
+        logger.info(
+            "[GRANT TARIFF] DONE user_id=%s payment_id=%s mode=%s "
+            "paid_until=%s screenshots→%d referral=%s",
+            user_id, payment.id, grant_mode, paid_until.isoformat(),
+            expected_balance_after, referral_result,
+        )
         return GrantResult(**referral_result)
 
     else:  # pack
         pack = tariffs_config.get_pack(payment.purchase_key)
-        logger.info(
-            "[GRANT] pack: user_id=%s pack=%s screenshots=%d payment=%s",
-            user_id, pack.key, pack.screenshots, payment.id,
+
+        # Read current balance before crediting
+        current_result = await session.execute(
+            select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
         )
+        balance_before = current_result.scalar_one_or_none() or 0
+
+        logger.info(
+            "[GRANT PACK] START user_id=%s payment_id=%s yk_id=%s "
+            "pack=%s screenshots_to_add=%d balance_before=%d",
+            user_id, payment.id, payment.yookassa_payment_id,
+            pack.key, pack.screenshots, balance_before,
+        )
+
         await add_screenshot_pack(session, user_id, pack.screenshots)
         await session.flush()
+
+        logger.info(
+            "[GRANT PACK] DONE user_id=%s payment_id=%s pack=%s "
+            "screenshots_balance: %d → %d",
+            user_id, payment.id, pack.key,
+            balance_before, balance_before + pack.screenshots,
+        )
         return GrantResult()
 
 

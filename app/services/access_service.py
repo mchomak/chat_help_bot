@@ -9,7 +9,7 @@ import uuid
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app import tariffs_config
 from app.db.models.user import UserAccess
 
 logger = logging.getLogger(__name__)
@@ -44,25 +44,38 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
     if access.access_status == AccessStatus.PAID:
         if access.paid_until and _is_expired(access.paid_until):
             logger.info(
-                "[ACCESS] paid subscription expired: user_id=%s paid_until=%s screenshots_before=%d",
+                "[ACCESS] check_access: paid subscription EXPIRED user_id=%s "
+                "paid_until=%s screenshots_zeroed=%d → 0",
                 user_id, access.paid_until.isoformat(), access.screenshots_balance,
             )
             access.access_status = AccessStatus.EXPIRED
-            access.screenshots_balance = 0  # unused screenshots burn on expiry
+            access.screenshots_balance = 0  # all screenshots (plan + packs) burn on expiry
             await session.flush()
             return AccessStatus.EXPIRED
+        logger.debug(
+            "[ACCESS] check_access: paid active user_id=%s paid_until=%s screenshots=%d",
+            user_id, access.paid_until.isoformat() if access.paid_until else None,
+            access.screenshots_balance,
+        )
         return AccessStatus.PAID
 
     if access.access_status == AccessStatus.TRIAL:
         if access.trial_expires_at and _is_expired(access.trial_expires_at):
             logger.info(
-                "[ACCESS] trial expired: user_id=%s trial_expires_at=%s screenshots_before=%d",
+                "[ACCESS] check_access: trial EXPIRED user_id=%s "
+                "trial_expires_at=%s screenshots_zeroed=%d → 0",
                 user_id, access.trial_expires_at.isoformat(), access.screenshots_balance,
             )
             access.access_status = AccessStatus.EXPIRED
             access.screenshots_balance = 0  # trial screenshots burn on expiry
             await session.flush()
             return AccessStatus.EXPIRED
+        logger.debug(
+            "[ACCESS] check_access: trial active user_id=%s trial_expires_at=%s screenshots=%d",
+            user_id,
+            access.trial_expires_at.isoformat() if access.trial_expires_at else None,
+            access.screenshots_balance,
+        )
         return AccessStatus.TRIAL
 
     if access.trial_used:
@@ -74,11 +87,11 @@ async def check_access(session: AsyncSession, user_id: uuid.UUID) -> str:
 async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAccess | None:
     """Atomically activate trial for user. Returns None if trial was already used.
 
-    Sets screenshots_balance to the configured trial limit (trial_image_limit).
-    Trial gives fewer screenshots than a paid subscription to keep them distinct.
+    Sets screenshots_balance to TRIAL_SCREENSHOTS (defined in tariffs_config).
+    Trial screenshots are intentionally fewer than a paid plan to keep them distinct.
     """
     now = datetime.datetime.now(datetime.UTC)
-    expires = now + datetime.timedelta(hours=settings.trial.duration_hours)
+    expires = now + datetime.timedelta(hours=tariffs_config.TRIAL_DURATION_HOURS)
 
     stmt = select(UserAccess).where(
         UserAccess.user_id == user_id,
@@ -90,7 +103,7 @@ async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAcces
         logger.debug("[ACCESS] activate_trial: trial already used or no record for user_id=%s", user_id)
         return None
 
-    trial_screenshots = settings.trial_image_limit  # default 100, NOT monthly_image_limit (300)
+    trial_screenshots = tariffs_config.TRIAL_SCREENSHOTS
     access.trial_used = True
     access.trial_started_at = now
     access.trial_expires_at = expires
@@ -99,8 +112,10 @@ async def activate_trial(session: AsyncSession, user_id: uuid.UUID) -> UserAcces
     await session.flush()
 
     logger.info(
-        "[ACCESS] trial activated: user_id=%s expires=%s screenshots=%d",
-        user_id, expires.isoformat(), trial_screenshots,
+        "[ACCESS] trial activated: user_id=%s duration_hours=%d "
+        "expires=%s trial_screenshots=%d",
+        user_id, tariffs_config.TRIAL_DURATION_HOURS,
+        expires.isoformat(), trial_screenshots,
     )
     return access
 
@@ -111,6 +126,7 @@ async def grant_paid_access(
     paid_until: datetime.datetime,
     payment_id: uuid.UUID,
     base_screenshots: int = 0,
+    replace_screenshots: bool = False,
 ) -> None:
     """Grant paid access to user after successful transaction.
 
@@ -137,9 +153,11 @@ async def grant_paid_access(
     balance_before = access.screenshots_balance or 0
 
     logger.info(
-        "[ACCESS] grant_paid_access: user_id=%s paid_until=%s +screenshots=%d "
-        "balance_before=%d payment_id=%s",
-        user_id, paid_until.isoformat(), base_screenshots, balance_before, payment_id,
+        "[ACCESS] grant_paid_access: user_id=%s payment_id=%s "
+        "paid_until=%s replace_screenshots=%s "
+        "screenshots: %d → %d (base_screenshots=%d)",
+        user_id, payment_id, paid_until.isoformat(),
+        replace_screenshots, balance_before, balance_after, base_screenshots,
     )
 
     access.access_status = AccessStatus.PAID
@@ -148,12 +166,17 @@ async def grant_paid_access(
     access.screenshots_balance = balance_before + base_screenshots
     await session.flush()
 
-    balance_after = balance_before + base_screenshots
     logger.info(
         "[ACCESS] grant_paid_access done: user_id=%s "
         "screenshots_balance: %d → %d paid_until=%s",
         user_id, balance_before, balance_after, paid_until.isoformat(),
     )
+    if result.rowcount == 0:
+        logger.error(
+            "[ACCESS] grant_paid_access UPDATE affected 0 rows for user_id=%s "
+            "— UserAccess record may be missing!",
+            user_id,
+        )
 
 
 async def add_screenshot_pack(
@@ -161,7 +184,12 @@ async def add_screenshot_pack(
     user_id: uuid.UUID,
     screenshots: int,
 ) -> None:
-    """Add screenshots to user's balance (screenshot pack purchase)."""
+    """Add paid screenshots to user's balance (screenshot pack purchase).
+
+    Pack screenshots are always ADDED to the existing balance, regardless of
+    whether the user is on trial or paid subscription. They are zeroed together
+    with the subscription balance when the paid subscription expires.
+    """
     # Read current balance for logging
     current_result = await session.execute(
         select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
@@ -182,10 +210,16 @@ async def add_screenshot_pack(
     await session.flush()
 
     logger.info(
-        "[ACCESS] add_screenshot_pack done: user_id=%s rows_updated=%d "
+        "[ACCESS] add_screenshot_pack DONE: user_id=%s rows_updated=%d "
         "screenshots_balance: %d → %d",
         user_id, result.rowcount, balance_before, balance_before + screenshots,
     )
+    if result.rowcount == 0:
+        logger.error(
+            "[ACCESS] add_screenshot_pack UPDATE affected 0 rows for user_id=%s "
+            "— UserAccess record may be missing!",
+            user_id,
+        )
 
 
 async def decrement_screenshot_balance(

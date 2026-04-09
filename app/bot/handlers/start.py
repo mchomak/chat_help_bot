@@ -26,8 +26,10 @@ CONSENT_TEXT = (
     "• Вы отправляете текст и/или скриншоты для анализа\n"
     "• Данные используются для формирования AI-ответов\n"
     "• Сервис не гарантирует результат общения\n\n"
-    "Нажимая «Принимаю», вы соглашаетесь с Пользовательским соглашением "
-    "и Политикой конфиденциальности."
+    "Нажимая «Принимаю», вы соглашаетесь с "
+    "<a href=\"https://telegra.ph/Polzovatelskoe-soglashenie-03-18-26\">Пользовательским соглашением</a> "
+    "и "
+    "<a href=\"https://telegra.ph/Politika-konfidencialnosti-03-18-53\">Политикой конфиденциальности</a>."
 )
 
 
@@ -96,5 +98,11 @@ async def cmd_start(message: types.Message, state: FSMContext, db_session: Async
         return
 
     # No consent yet — ask for it
-    await message.answer(CONSENT_TEXT, reply_markup=consent_keyboard())
+    await message.answer(
+        CONSENT_TEXT,
+        reply_markup=consent_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
     await state.set_state(ConsentStates.waiting_consent)
