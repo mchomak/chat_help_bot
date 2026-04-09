@@ -130,8 +130,12 @@ async def grant_paid_access(
 ) -> None:
     """Grant paid access to user after successful transaction.
 
-    IMPORTANT: screenshots_balance is ADDED to (not replaced) so that previously
-    purchased screenshot packs are not lost when renewing a subscription.
+    When replace_screenshots=False (default), base_screenshots is ADDED to the
+    existing balance so that previously purchased screenshot packs are preserved.
+    When replace_screenshots=True, balance is SET to base_screenshots — used for
+    trial→paid and expired-subscription transitions where carrying over a stale
+    balance would be incorrect.
+
     Screenshots only burn to zero when the subscription period actually expires
     (handled in check_access).
 
@@ -151,6 +155,7 @@ async def grant_paid_access(
         return
 
     balance_before = access.screenshots_balance or 0
+    balance_after = base_screenshots if replace_screenshots else balance_before + base_screenshots
 
     logger.info(
         "[ACCESS] grant_paid_access: user_id=%s payment_id=%s "
@@ -163,7 +168,7 @@ async def grant_paid_access(
     access.access_status = AccessStatus.PAID
     access.paid_until = paid_until
     access.last_successful_payment_id = str(payment_id)
-    access.screenshots_balance = balance_before + base_screenshots
+    access.screenshots_balance = balance_after
     await session.flush()
 
     logger.info(
@@ -171,12 +176,6 @@ async def grant_paid_access(
         "screenshots_balance: %d → %d paid_until=%s",
         user_id, balance_before, balance_after, paid_until.isoformat(),
     )
-    if result.rowcount == 0:
-        logger.error(
-            "[ACCESS] grant_paid_access UPDATE affected 0 rows for user_id=%s "
-            "— UserAccess record may be missing!",
-            user_id,
-        )
 
 
 async def add_screenshot_pack(
