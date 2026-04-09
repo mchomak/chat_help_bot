@@ -118,12 +118,23 @@ async def grant_paid_access(
     purchased screenshot packs are not lost when renewing a subscription.
     Screenshots only burn to zero when the subscription period actually expires
     (handled in check_access).
+
+    Uses ORM mutation (not bulk UPDATE) to keep the session identity map in sync.
+    Any code running in the same session after this call sees updated values
+    immediately, preventing stale-cache write-backs from reverting the grant.
     """
-    # Read current balance for before/after logging
-    current_result = await session.execute(
-        select(UserAccess.screenshots_balance).where(UserAccess.user_id == user_id)
+    result = await session.execute(
+        select(UserAccess).where(UserAccess.user_id == user_id)
     )
-    balance_before = current_result.scalar_one_or_none() or 0
+    access = result.scalar_one_or_none()
+    if access is None:
+        logger.error(
+            "[ACCESS] grant_paid_access: no UserAccess record for user_id=%s — cannot grant",
+            user_id,
+        )
+        return
+
+    balance_before = access.screenshots_balance or 0
 
     logger.info(
         "[ACCESS] grant_paid_access: user_id=%s paid_until=%s +screenshots=%d "
@@ -131,25 +142,17 @@ async def grant_paid_access(
         user_id, paid_until.isoformat(), base_screenshots, balance_before, payment_id,
     )
 
-    stmt = (
-        update(UserAccess)
-        .where(UserAccess.user_id == user_id)
-        .values(
-            access_status=AccessStatus.PAID,
-            paid_until=paid_until,
-            last_successful_payment_id=str(payment_id),
-            # ADD base_screenshots to existing balance (do not reset purchased packs)
-            screenshots_balance=UserAccess.screenshots_balance + base_screenshots,
-        )
-    )
-    result = await session.execute(stmt)
+    access.access_status = AccessStatus.PAID
+    access.paid_until = paid_until
+    access.last_successful_payment_id = str(payment_id)
+    access.screenshots_balance = balance_before + base_screenshots
     await session.flush()
 
     balance_after = balance_before + base_screenshots
     logger.info(
-        "[ACCESS] grant_paid_access done: user_id=%s rows_updated=%d "
+        "[ACCESS] grant_paid_access done: user_id=%s "
         "screenshots_balance: %d → %d paid_until=%s",
-        user_id, result.rowcount, balance_before, balance_after, paid_until.isoformat(),
+        user_id, balance_before, balance_after, paid_until.isoformat(),
     )
 
 
